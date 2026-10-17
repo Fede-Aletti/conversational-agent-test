@@ -3,8 +3,8 @@
     {
       "source": "functions",
       "codebase": "default",
-      "runtime": "nodejs20",
-      "ignore": ["node_modules", ".git", "test", "src", "*.log", "vitest*.ts", "tsconfig*.json"],
+      "runtime": "nodejs22",
+      "ignore": ["node_modules", ".git", "*.log", "vitest*.ts", "tsconfig*.json"],
       "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
     }
   ],

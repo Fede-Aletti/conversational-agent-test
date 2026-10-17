@@ -10,7 +10,7 @@ info:
     "retryable":bool,"agent_action":"..."}; follow agent_action. Never state a status, availability, price or rule
     that is not in a response. No real payment ever happens: all amounts are simulated.
 servers:
-  - url: https://REPLACE_WITH_DEPLOYED_FUNCTION_URL
+  - url: https://https://api-nam423zy2q-uc.a.run.app
     description: Cloud Function `api` (2nd gen). Replace with the deployed URL at infra time.
 paths:
   /bookings/lookup:
