@@ -1,0 +1,28 @@
+tests:
+  - name: success_sets_variable
+    tool: echo_tool
+    args: {name: Ana, count: 2}
+    variables: {auth_status: authenticated}
+    expectations:
+      response:
+        - {path: "$.result.status", operator: equals, value: success}
+        - {path: "$.result.greeting", operator: contains, value: Ana}
+        - {path: "$.result.items", operator: length_equals, value: 2}
+      variables:
+        - {path: "$.last_name", operator: equals, value: Ana}
+  - name: unauthenticated_returns_agent_action
+    tool: echo_tool
+    args: {name: Ana}
+    expectations:
+      response:
+        - {path: "$.result.agent_action", operator: is_not_null}
+        - {path: "$.result.greeting", operator: is_null}
+      variables:
+        - {path: "$.last_name", operator: is_null}
+  - name: context_form
+    tool: echo_tool
+    args: {name: Bo}
+    context: {state: {auth_status: authenticated}}
+    expectations:
+      response:
+        - {path: "$.result.status", operator: equals, value: success}
