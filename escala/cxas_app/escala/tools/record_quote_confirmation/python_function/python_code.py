@@ -8,18 +8,6 @@ values with the createRebooking arguments. Session state holds strings only.
 import json
 
 
-def _as_dict(raw) -> dict:
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            parsed = json.loads(raw)
-        except ValueError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
-
-
 def record_quote_confirmation(quote_id: str, total_ars: int) -> dict:
     """Record the passenger's explicit confirmation of an offered quote and its total.
 
@@ -53,3 +41,15 @@ def record_quote_confirmation(quote_id: str, total_ars: int) -> dict:
         "confirmed_quote_id": quote_id,
         "confirmed_total_ars": int(total_ars),
     }
+
+
+def _as_dict(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}

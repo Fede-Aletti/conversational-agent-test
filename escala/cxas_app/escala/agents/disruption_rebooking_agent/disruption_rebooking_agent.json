@@ -7,10 +7,9 @@
   "toolsets": [
     {
       "toolset": "escala_api",
-      "toolIds": ["lookupBooking", "getFlightStatus", "getRebookingOptions", "createRebooking", "searchFaq"]
+      "toolIds": ["lookupBooking", "getFlightStatus", "getRebookingOptions", "createRebooking", "searchFaq", "createHandoffCase"]
     }
   ],
-  "childAgents": ["handoff_agent"],
   "afterModelCallbacks": [{"pythonCode": "agents/disruption_rebooking_agent/after_model_callbacks/inject_disclaimer/python_code.py"}],
   "beforeToolCallbacks": [{"pythonCode": "agents/disruption_rebooking_agent/before_tool_callbacks/guard_mutating_calls/python_code.py"}],
   "afterToolCallbacks": [{"pythonCode": "agents/disruption_rebooking_agent/after_tool_callbacks/track_state/python_code.py"}]

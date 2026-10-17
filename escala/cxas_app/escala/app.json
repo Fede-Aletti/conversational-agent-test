@@ -33,6 +33,7 @@
       "description": "Session channel, text or voice. Optional; used for tone only.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": ""
       }
     },
@@ -41,6 +42,7 @@
       "description": "Booking code (PNR) of the identified booking. Set by the after-tool callback on a successful lookupBooking.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": ""
       }
     },
@@ -49,6 +51,7 @@
       "description": "JSON object mapping each quote_id offered by the latest getRebookingOptions to its expires_at. Set by the after-tool callback; never set in evals.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": ""
       }
     },
@@ -57,6 +60,7 @@
       "description": "JSON object mapping each offered quote_id to its payment.total_ars. Set by the after-tool callback together with offered_quotes; never set in evals.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": ""
       }
     },
@@ -65,6 +69,7 @@
       "description": "quote_id the passenger explicitly confirmed. Set by record_quote_confirmation, cleared when options are re-fetched or the rebooking is executed; never set in evals.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": ""
       }
     },
@@ -73,6 +78,7 @@
       "description": "Total in ARS the passenger confirmed together with confirmed_quote_id, stored as a string. Never set in evals.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": ""
       }
     },
@@ -81,6 +87,7 @@
       "description": "Analytics outcome of the session: resolved, handed_off or failed.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": ""
       }
     },
@@ -89,6 +96,7 @@
       "description": "Internal flag, the string true once the experimental disclaimer was spoken. Never set in evals.",
       "schema": {
         "type": "STRING",
+        "required": [],
         "default": "false"
       }
     }

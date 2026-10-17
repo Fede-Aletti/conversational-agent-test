@@ -17,13 +17,13 @@
 ### Architecture
 
 - **App:** `projects/gen-lang-client-0907599903/locations/us/apps/escala`; local dir `escala/cxas_app/escala/`. **Channels:** text and voice, one app. Default eval modality `text`. Voice-ready: short turns, PNR read back letter by letter, option ids "A/B/C". Live/audio model not specified by sources: platform default (see Known Issues). Time zone `America/Argentina/Buenos_Aires`.
-- **Two deployables:** (1) CES app (3 agents + one OpenAPI toolset + 1 thin Python tool + callbacks), (2) Firebase backend in `escala/backend/` (below).
+- **Two deployables:** (1) CES app (2 agents + one OpenAPI toolset + 1 thin Python tool + callbacks), (2) Firebase backend in `escala/backend/` (below).
 
 ```
 Passenger (text/voice)
    -> CES app `escala`
-        root_agent ──transfer──> disruption_rebooking_agent ──transfer──> handoff_agent
-            └──────────────────────transfer─────────────────────────────────^
+        root_agent ──transfer──> disruption_rebooking_agent
+        (both agents call the createHandoffCase tool directly; no handoff sub-agent)
         OpenAPI toolset `escala_api` (service-agent ID token)  + before/after_tool callbacks
    -> Cloud Function `api` (HTTPS, Express, Firebase 2nd gen, TypeScript)
         bounded contexts: bookings | operations | ancillaries | policy-rules | handoff
@@ -33,15 +33,14 @@ Passenger (text/voice)
 
 | Agent | Journey owned | Tools |
 |---|---|---|
-| `root_agent` | Greeting + experimental disclaimer, identification (PNR + surname, fallback surname + date + route), open FAQ, triage. Never decides anything the backend can decide. | `escala_api_lookupBooking`, `escala_api_searchFaq` |
-| `disruption_rebooking_agent` | Entire disruption -> options -> read-back -> confirmation -> result journey (voluntary changes too). Answers baggage/ancillary questions inline from backend data and FAQ without leaving. | `lookupBooking`, `getFlightStatus`, `getRebookingOptions`, `createRebooking`, `searchFaq` (all `escala_api_*`), `record_quote_confirmation` (Python), `end_session` |
-| `handoff_agent` | Builds the handoff case with full context, tells the passenger they will not repeat themselves, closes. Terminal agent. | `escala_api_createHandoffCase`, `set_session_outcome` (Python), `end_session` |
+| `root_agent` | Greeting + experimental disclaimer, identification (PNR + surname, fallback surname + date + route), open FAQ, triage. Never decides anything the backend can decide. | `escala_api_lookupBooking`, `escala_api_searchFaq`, `escala_api_createHandoffCase`, `set_session_outcome` (Python), `end_session` |
+| `disruption_rebooking_agent` | Entire disruption -> options -> read-back -> confirmation -> result journey (voluntary changes too). Answers baggage/ancillary questions inline from backend data and FAQ without leaving. | `lookupBooking`, `getFlightStatus`, `getRebookingOptions`, `createRebooking`, `searchFaq` (all `escala_api_*`), `createHandoffCase` (all `escala_api_*`), `record_quote_confirmation` (Python), `set_session_outcome` (Python), `end_session` |
 
 **Why journey-based agents, not per-domain agents (bookings / operations / ancillaries / policies):** the backend already unifies the domains behind functional endpoints, so a domain split in the LLM layer would add routing LLM calls and context loss with no decision left to specialise on. The design guide recommends isolating sub-agents "to specific use cases that reflect the customer journey to minimize a sub-agent handing off to another sub-agent (which will introduce context loss)" (gecx-design-guide.md, "Using the multi-agent framework") and lists the booking-style flow split across agents as a bad example (flow fragmentation, context degradation, experience disruption). Latency is also named as a multi-agent limitation, hence only 3 agents.
 
-**Why a separate `handoff_agent` (vs. a tool on each agent):** handoff is reachable from root and from the rebooking journey (policy block, no alternatives, outage, destination change, explicit human request), so it is a reusable sub-agent (guide: "Build sub-agents that can be re-used across multiple intents"). It is terminal (no return transfer), so it adds one transfer but no ping-pong, and one place guarantees a complete case plus a deterministic closing. Context travels in the shared conversation + `active_pnr`; the backend enriches the case from Firestore, so the LLM only supplies `reason` and a short `summary`.
+**Why handoff is a tool, not a sub-agent (rev 4):** lint S007 forbids a sub-agent with two parents, and handoff is reachable from both root and the rebooking journey. Handoff is therefore deterministic: both agents carry `createHandoffCase`, `set_session_outcome` and `end_session` and share a short `Create_Handoff_Case` instruction step. Context travels in the shared conversation + `active_pnr`; the backend enriches the case from Firestore, so the LLM only supplies `reason` and a short `summary`.
 
-- `childAgents` must use directory names with underscores: root -> `["disruption_rebooking_agent", "handoff_agent"]`; `disruption_rebooking_agent` -> `["handoff_agent"]`.
+- `childAgents` must use directory names with underscores: root -> `["disruption_rebooking_agent"]`; `disruption_rebooking_agent` -> no children.
 
 ### Backend (Firebase, `escala/backend/`)
 
@@ -119,8 +118,8 @@ escala/backend/
 ### Routing Logic
 
 PRD defines no routing rules explicitly; proposal from PRD 4 and 7:
-- `root_agent`: greeting + disclaimer; open FAQ via `searchFaq` (answer with citation, hedge "según la información pública de referencia, a confirmar en aerolineas.com.ar"); identification via `lookupBooking`; any booking-specific incident/change/baggage-on-my-booking -> transfer to `disruption_rebooking_agent` with `active_pnr` already set; explicit human request or unresolvable -> `handoff_agent`.
-- `disruption_rebooking_agent`: owns the journey end to end. Interruptions (baggage question) answered inline from `lookupBooking` ancillaries or `searchFaq`, then resume the pending step. Triggers to `handoff_agent`: `DESTINATION_CHANGE_NOT_SUPPORTED`, `POLICY_FARE_NOT_CHANGEABLE` (after explaining), empty options and the passenger declines the later flight, second consecutive `UPSTREAM_TIMEOUT`, explicit human request, partial-party request.
+- `root_agent`: greeting + disclaimer; open FAQ via `searchFaq` (answer with citation, hedge "según la información pública de referencia, a confirmar en aerolineas.com.ar"); identification via `lookupBooking`; any booking-specific incident/change/baggage-on-my-booking -> transfer to `disruption_rebooking_agent` with `active_pnr` already set; explicit human request or unresolvable -> `Create_Handoff_Case` step (`createHandoffCase` tool, no transfer).
+- `disruption_rebooking_agent`: owns the journey end to end. Interruptions (baggage question) answered inline from `lookupBooking` ancillaries or `searchFaq`, then resume the pending step. Triggers to `Create_Handoff_Case` (`createHandoffCase` tool): `DESTINATION_CHANGE_NOT_SUPPORTED`, `POLICY_FARE_NOT_CHANGEABLE` (after explaining), empty options and the passenger declines the later flight, second consecutive `UPSTREAM_TIMEOUT`, explicit human request, partial-party request.
 - Outage rule (instruction, backed by `retryable`/`agent_action`): retry the same call once; if it fails again, say plainly the system is not responding, never guess status or availability, offer handoff.
 - Context change mid-conversation: keep `active_pnr` and facts; call `getRebookingOptions` again (this invalidates earlier quotes in the callback state); never re-ask known data.
 - The agent presents only what the backend returned; `executable:false` options are explained but never offered for confirmation.
@@ -143,7 +142,7 @@ Removed: `sim_today` (backend resolves dates), `_sim_state` (backend ledger).
 | Callback | Agent(s) | Purpose / justification |
 |---|---|---|
 | `before_tool` `guard_mutating_calls` | `disruption_rebooking_agent` | **Defense in depth** (backend remains authoritative). For `escala_api_createRebooking`: short-circuit with `{"status":"error","error_code":"CONFIRMATION_REQUIRED","agent_action":"..."}` unless `confirmed_quote_id == input.quote_id`, `quote_id in offered_quotes`, `input.confirmed is True` and `input.confirmed_total_ars == confirmed_total_ars == offered total`. Prevents the model from executing before the passenger confirmed the *current* quote. Limitation: `record_quote_confirmation` is itself LLM-called, so this narrows but does not eliminate the model-skips-consent risk; the backend rejects `confirmed:false`/expired/stale/unknown quotes regardless. |
-| `after_tool` `track_state` | `root_agent`, `disruption_rebooking_agent`, `handoff_agent` | On `lookupBooking` ok -> `active_pnr`; on `getRebookingOptions` ok -> `offered_quotes` (reset `confirmed_quote_id`); on `createRebooking` ok -> clear `confirmed_quote_id`; on `createHandoffCase` ok -> `session_outcome="handed_off"`. State bookkeeping that code can do. |
+| `after_tool` `track_state` | `root_agent`, `disruption_rebooking_agent` | On `lookupBooking` ok -> `active_pnr`; on `getRebookingOptions` ok -> `offered_quotes` (reset `confirmed_quote_id`); on `createRebooking` ok -> clear `confirmed_quote_id`; on `createHandoffCase` ok -> `session_outcome="handed_off"`. State bookkeeping that code can do. |
 | `after_model` `inject_disclaimer` | all three | Prepend the fixed Spanish experimental disclaimer once (flag `_disclaimer_shown`), only when the response has text. Appendix "Experimental disclaimer". |
 
 No `before_agent` (clock moved to backend). No `before_model` trigger pattern. Callback code must use `tool.name` matching verified from the platform (guide: wrong tool names fail before `try/except`). All strings Spanish (AR, voseo).
@@ -172,7 +171,7 @@ Contract for the scaffolder. Notation: **U** passenger, **A** agent (Spanish AR 
 - R6 Intent switch: acknowledge, keep context, route by new intent (change -> options again; destination change -> explain + handoff; "never mind" -> close politely, `set_session_outcome`).
 - R7 Double confirmation: second "sí"/"confirmá" after execution -> call `createRebooking` again with the same key only if unsure of state; answer from `already_applied:true` ("Ya lo hicimos, tu código sigue siendo X"), never imply a second change.
 - R8 Refusal: U declines all options -> no execution; offer later options (`options_after_deadline`), then handoff; U declines the read-back -> back to option choice, nothing executed.
-- R9 Handoff on explicit request is immediate (no persuasion); on failure paths first explain exactly what is pending and why, then offer it. Call sequence: transfer to `handoff_agent` -> `createHandoffCase(reason, summary, pnr?, idempotency_key="handoff-<PNR|NOPNR>-<n>")` -> tell U the `case_id` and that they will not need to repeat themselves -> farewell -> `end_session`.
+- R9 Handoff on explicit request is immediate (no persuasion); on failure paths first explain exactly what is pending and why, then offer it. Call sequence: `createHandoffCase(reason, summary, pnr?, idempotency_key="handoff-<PNR|NOPNR>-<n>")` -> tell U the `case_id` and that they will not need to repeat themselves -> farewell -> `end_session`.
 - R10 Outage: `retryable:true` error -> one retry of the same op; second failure -> plain disclosure, no guessing, offer handoff.
 - R11 Disclaimer once on the first agent text (callback).
 
@@ -435,5 +434,6 @@ Opening utterance for CUJ-01 (PRD 5, verbatim): "Hola, viajamos dos de Córdoba 
 | 2026-10-17 | Initial requirements-derived TDD draft (sources: prd.md, project-context.md) | tdd-writer |
 | 2026-10-17 | Rev 2: Firebase backend (Functions + Firestore) owns all deterministic decisions; OpenAPI toolset; journey-based agents (root / disruption_rebooking / handoff); two-phase quotes with idempotency ledger; before/after_tool callbacks; Vertex AI Search FAQ with curated fallback; removed `_sim_state`/`sim_today`; offline substitutes now vitest/emulator/contract/callback tests; build order updated | tdd-writer |
 | 2026-10-17 | Rev 3 (APPROVED by product owner): backend declared MOCK; scenario catalog (22 named fixtures) + seeded generator (~120 bookings) + flag-gated `GET /scenarios`; "Conversation flows" section (F-01..F-13 with backend call sequences); voluntary changes ENABLED by default with simulated payment (confirm total, `receipt_id`); Blaze/billing resolved; coverage CUJ-21..25 | tdd-writer |
+| 2026-10-17 | Rev 4: `handoff_agent` replaced by `createHandoffCase` tool in both agents (lint S007: single parent) | build |
 
 Review and approve before scaffolding the agent.
