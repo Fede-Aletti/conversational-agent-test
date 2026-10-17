@@ -1,6 +1,6 @@
 # Technical Design Document (TDD) - Escala
 
-> **Status: Approved by the product owner (2026-10-17), rev 3.** Living document. Update the TDD first, then update tests/evals to match.
+> **Status: Approved by the product owner (2026-10-17), rev 5.** Living document. Update the TDD first, then update tests/evals to match.
 > Mode: draft from requirements. Sources: `escala/sources/prd.md` (functional PRD, Spanish, + English "Engineering assumptions" appendix), `escala/sources/project-context.md` (fixed decisions + credit policy), `TESTING.md` (offline harness). **Revision 2:** product-owner-approved architecture direction supersedes the appendix rows "Booking backend", "Policy knowledge", "Operation safety" (in-session Python tools / `_sim_state`).
 > Artifact language: English. Agent-facing instructions and every customer-visible string: Spanish (Argentina), professional tone, voseo, voice-friendly (short turns, no markdown dependence).
 
@@ -133,6 +133,9 @@ PRD defines no routing rules explicitly; proposal from PRD 4 and 7:
 | `offered_quotes` | JSON `{quote_id: expires_at}` | Set by `after_tool` callback on `getRebookingOptions` (replaces previous) | **NEVER override in evals.** |
 | `confirmed_quote_id` | string | Set by Python tool `record_quote_confirmation(quote_id, total_ars)` after the passenger's explicit yes to the quote **and its total amount** (also stores `confirmed_total_ars`); cleared by `after_tool` on `getRebookingOptions` and on `createRebooking` | **NEVER override in evals.** |
 | `session_outcome` | `resolved`/`handed_off`/`failed` | `after_tool` on `createHandoffCase` -> `handed_off`; `set_session_outcome` for `resolved`/`failed` | Analytics (appendix "Metrics"). |
+| `fsm_state` | `IDENTIFY`/`TRIAGE`/`FAQ`/`OPTIONS`/`CONFIRM`/`DONE`/`HANDOFF`/`FAILURE` (string, `required: []`) | `after_tool` `track_state` via the pure `next_fsm` function; empty = `IDENTIFY` | Conversation FSM (rev 5). **NEVER override in evals.** |
+| `fsm_failures` | string int | `after_tool` `track_state` | Consecutive retryable errors; 2 -> `FAILURE`. **NEVER override in evals.** |
+| `fsm_instructions` | string | `before_model` `inject_fsm_instructions`; default = root `IDENTIFY` step | Step text of `fsm_state`, referenced as `{fsm_instructions}` in each instruction. **NEVER override in evals.** |
 | `_disclaimer_shown` | bool | `after_model` callback | **NEVER override in evals.** |
 
 Removed: `sim_today` (backend resolves dates), `_sim_state` (backend ledger).
@@ -142,10 +145,11 @@ Removed: `sim_today` (backend resolves dates), `_sim_state` (backend ledger).
 | Callback | Agent(s) | Purpose / justification |
 |---|---|---|
 | `before_tool` `guard_mutating_calls` | `disruption_rebooking_agent` | **Defense in depth** (backend remains authoritative). For `escala_api_createRebooking`: short-circuit with `{"status":"error","error_code":"CONFIRMATION_REQUIRED","agent_action":"..."}` unless `confirmed_quote_id == input.quote_id`, `quote_id in offered_quotes`, `input.confirmed is True` and `input.confirmed_total_ars == confirmed_total_ars == offered total`. Prevents the model from executing before the passenger confirmed the *current* quote. Limitation: `record_quote_confirmation` is itself LLM-called, so this narrows but does not eliminate the model-skips-consent risk; the backend rejects `confirmed:false`/expired/stale/unknown quotes regardless. |
-| `after_tool` `track_state` | `root_agent`, `disruption_rebooking_agent` | On `lookupBooking` ok -> `active_pnr`; on `getRebookingOptions` ok -> `offered_quotes` (reset `confirmed_quote_id`); on `createRebooking` ok -> clear `confirmed_quote_id`; on `createHandoffCase` ok -> `session_outcome="handed_off"`. State bookkeeping that code can do. |
+| `after_tool` `track_state` | `root_agent`, `disruption_rebooking_agent` | On `lookupBooking` ok -> `active_pnr`; on `getRebookingOptions` ok -> `offered_quotes` (reset `confirmed_quote_id`); on `createRebooking` ok -> clear `confirmed_quote_id`; on `createHandoffCase` ok -> `session_outcome="handed_off"`. State bookkeeping that code can do. **FSM (rev 5):** also computes `fsm_state` with the single pure function `next_fsm(state, failures, operation, payload)`: `lookupBooking` ok -> TRIAGE; `getRebookingOptions` ok with executable options (incl. `options_after_deadline`) -> OPTIONS, none/blocked -> FAILURE, error `DESTINATION_CHANGE_NOT_SUPPORTED`/`VOLUNTARY_CHANGES_DISABLED` -> FAILURE (a new successful options call always resets to OPTIONS, R4); `record_quote_confirmation` ok -> CONFIRM; `createRebooking` ok/`already_applied` -> DONE; `createHandoffCase` ok -> HANDOFF; `searchFaq` ok -> FAQ only from TRIAGE/FAQ (R5 interruptions keep the state); two consecutive `retryable` errors -> FAILURE; unknown state/tool/result -> unchanged (unknown state = IDENTIFY). The file is identical in both agents (enforced by a test). |
+| `before_model` `inject_fsm_instructions` | `root_agent`, `disruption_rebooking_agent` | **Dynamic instructions (rev 5):** writes the Spanish step text of `fsm_state` (dict `STEP_TEXTS`, per agent) into `fsm_instructions` (only when it changes); missing/unknown state -> IDENTIFY. Each `instruction.txt` is a short core (persona, cross-cutting rules R1-R11 compacted, tool refs) plus `{fsm_instructions}`, cutting per-turn instruction text to about 25-37% of the full instruction. Pure injection: never returns a response. |
 | `after_model` `inject_disclaimer` | all three | Prepend the fixed Spanish experimental disclaimer once (flag `_disclaimer_shown`), only when the response has text. Appendix "Experimental disclaimer". |
 
-No `before_agent` (clock moved to backend). No `before_model` trigger pattern. Callback code must use `tool.name` matching verified from the platform (guide: wrong tool names fail before `try/except`). All strings Spanish (AR, voseo).
+No `before_agent` (clock moved to backend). No `before_model` trigger pattern (the rev 5 `before_model` only publishes instruction text). Callback code must use `tool.name` matching verified from the platform (guide: wrong tool names fail before `try/except`). All strings Spanish (AR, voseo).
 
 ### Instruction outline (agent-facing, Spanish at build time)
 
@@ -435,5 +439,6 @@ Opening utterance for CUJ-01 (PRD 5, verbatim): "Hola, viajamos dos de Córdoba 
 | 2026-10-17 | Rev 2: Firebase backend (Functions + Firestore) owns all deterministic decisions; OpenAPI toolset; journey-based agents (root / disruption_rebooking / handoff); two-phase quotes with idempotency ledger; before/after_tool callbacks; Vertex AI Search FAQ with curated fallback; removed `_sim_state`/`sim_today`; offline substitutes now vitest/emulator/contract/callback tests; build order updated | tdd-writer |
 | 2026-10-17 | Rev 3 (APPROVED by product owner): backend declared MOCK; scenario catalog (22 named fixtures) + seeded generator (~120 bookings) + flag-gated `GET /scenarios`; "Conversation flows" section (F-01..F-13 with backend call sequences); voluntary changes ENABLED by default with simulated payment (confirm total, `receipt_id`); Blaze/billing resolved; coverage CUJ-21..25 | tdd-writer |
 | 2026-10-17 | Rev 4: `handoff_agent` replaced by `createHandoffCase` tool in both agents (lint S007: single parent) | build |
+| 2026-10-17 | Rev 5: FSM-driven dynamic instructions: `fsm_state` computed by `track_state` (pure `next_fsm`), per-state step text injected via `{fsm_instructions}` by a `before_model` callback; short core instructions to cut per-turn tokens | build |
 
 Review and approve before scaffolding the agent.

@@ -99,6 +99,33 @@
         "required": [],
         "default": "false"
       }
+    },
+    {
+      "name": "fsm_state",
+      "description": "Conversation FSM state: IDENTIFY, TRIAGE, FAQ, OPTIONS, CONFIRM, DONE, HANDOFF or FAILURE. Computed by the after-tool callback track_state from tool results, never by the LLM; empty means IDENTIFY. Never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "required": [],
+        "default": ""
+      }
+    },
+    {
+      "name": "fsm_failures",
+      "description": "Consecutive retryable tool errors counted by track_state (two move the FSM to FAILURE). Never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "required": [],
+        "default": "0"
+      }
+    },
+    {
+      "name": "fsm_instructions",
+      "description": "Step text of the current fsm_state, injected into the agent instructions as {fsm_instructions}. Written by the before-model callback inject_fsm_instructions; the default is the root IDENTIFY step. Never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "required": [],
+        "default": "Paso actual: identificar la reserva.\n1. Primer mensaje: saludá brevemente y preguntá en qué lo podés ayudar; si ya contó su situación, retomala sin pedírsela de nuevo.\n2. Si habla de su reserva, un vuelo cancelado o demorado, un cambio o su equipaje y el código de reserva activo está vacío: pedí código de reserva y apellido de cualquier pasajero en la misma pregunta y usá escala_api_lookupBooking con last_name y pnr tal como los dijo. Si el código activo ya tiene valor, derivá a disruption_rebooking_agent.\n3. BOOKING_NOT_FOUND: pedile que revise el código una vez. Si sigue sin aparecer, pedí de a una cosa apellido, fecha del vuelo y ruta, y usá escala_api_lookupBooking con last_name, flight_date, origin y destination. Si tampoco aparece, ofrecé una persona (reason user_request, sin pnr). Si corrige un dato, avisá y repetí la consulta.\n4. Pregunta general: escala_api_searchFaq en español; respondé en una a tres oraciones con la fuente; si verified es false, agregá que hay que confirmarlo en aerolineas.com.ar; sin resultados, decí que no tenés información confiable y ofrecé una persona."
+      }
     }
   ]
 }
