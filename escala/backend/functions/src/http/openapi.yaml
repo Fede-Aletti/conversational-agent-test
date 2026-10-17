@@ -1,0 +1,481 @@
+openapi: 3.0.3
+info:
+  title: Escala airline mock backend
+  version: 1.0.0
+  description: >
+    Deterministic MOCK of an airline's systems used by the Escala customer-service agent. All decisions
+    (identification, disruption impact, eligible alternatives, fees, ancillary outcomes, idempotency) are made by this
+    API; the agent only explains results and obtains the passenger's explicit decision. Domain outcomes (not found,
+    policy block, expired quote, simulated outage) return HTTP 200 with {"status":"error","error_code":...,
+    "retryable":bool,"agent_action":"..."}; follow agent_action. Never state a status, availability, price or rule
+    that is not in a response. No real payment ever happens: all amounts are simulated.
+servers:
+  - url: https://REPLACE_WITH_DEPLOYED_FUNCTION_URL
+    description: Cloud Function `api` (2nd gen). Replace with the deployed URL at infra time.
+paths:
+  /bookings/lookup:
+    get:
+      operationId: lookupBooking
+      summary: Identify a booking and return its trimmed state
+      description: >
+        Identifies the passenger's booking and returns passengers (id P1, P2..., type adult/minor/infant, check-in state,
+        fare family), segments with their current flight status, connection_status, ancillaries (extra bags, seats,
+        priority boarding, pets, sport equipment) and a disruption summary (change_type_hint involuntary/voluntary,
+        disruption_type, affected_segments). Call this FIRST, as soon as you have the booking code (PNR) and surname.
+        Case, spaces, hyphens and accents are normalized by the backend; pass what the passenger said. Use the PNR
+        plus last_name. Only when the passenger does not know the PNR, call again with last_name plus flight_date,
+        origin and destination (IATA codes). BOOKING_NOT_FOUND means no match: ask the passenger to re-check the
+        code once, then use the fallback, then offer a human handoff. Answer questions about the booking's own extras
+        (for example "does my baggage stay?") from the ancillaries returned here, not from the FAQ.
+      parameters:
+        - name: last_name
+          in: query
+          required: true
+          description: Surname of any passenger on the booking, as the passenger said it.
+          schema: { type: string }
+        - name: pnr
+          in: query
+          required: false
+          description: Booking code (6 letters or digits). When present, identification is PNR plus surname.
+          schema: { type: string }
+        - name: flight_date
+          in: query
+          required: false
+          description: Fallback only (no PNR). Date of any flight of the booking, YYYY-MM-DD.
+          schema: { type: string, format: date }
+        - name: origin
+          in: query
+          required: false
+          description: Fallback only (no PNR). Origin airport IATA code, e.g. AEP.
+          schema: { type: string }
+        - name: destination
+          in: query
+          required: false
+          description: Fallback only (no PNR). Destination airport IATA code, e.g. BRC.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Booking found, or an error envelope (BOOKING_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BookingView'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+  /flights/{flight_number}/status:
+    get:
+      operationId: getFlightStatus
+      summary: Current status of one flight
+      description: >
+        Returns the schedule status of a single flight on a date: on_time, delayed (with delay_minutes), cancelled or
+        schedule_changed, plus equipment_downgrade. Use it when the passenger asks about the status of a flight of
+        their booking. Never guess a status. If the result is an error with retryable=true (UPSTREAM_TIMEOUT or
+        UPSTREAM_ERROR), say you are checking, retry the same call ONCE, and if it fails again say plainly that the
+        system is not responding and offer a human handoff.
+      parameters:
+        - name: flight_number
+          in: path
+          required: true
+          description: Flight number, for example AR1561.
+          schema: { type: string }
+        - name: date
+          in: query
+          required: true
+          description: Flight date, YYYY-MM-DD.
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Flight status, or an error envelope (FLIGHT_NOT_FOUND, UPSTREAM_TIMEOUT, UPSTREAM_ERROR).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/FlightStatus'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+  /disruptions/{pnr}/options:
+    post:
+      operationId: getRebookingOptions
+      summary: Phase 1 - rebooking options with quotes for the whole itinerary
+      description: >
+        Computes, for the whole itinerary and all seat-holding passengers at once, whether the change is involuntary
+        (cancellation, long delay, schedule change, missed connection, equipment downgrade) or voluntary, and returns the
+        ranked alternatives. Present options in the returned order, only those with executable=true; explain
+        executable=false options (reason in not_executable_reason, for example INSUFFICIENT_SEATS for part of the party,
+        ANCILLARY_NEEDS_REVIEW) but never offer them for confirmation. options_after_deadline are later flights that
+        miss the passenger's deadline: say so explicitly. Each executable option has its own quote_id valid for a short
+        time (expires_at); a new call replaces earlier quotes. per_passenger tells, for each passenger, whether check-in
+        must be cancelled (they must redo it) and the outcome of every extra: transfers, transfers_with_fee,
+        not_transferred or needs_review; never promise anything not stated. payment.total_ars is the SIMULATED total
+        (fee plus fare difference plus ancillary re-issue; 0 for involuntary changes). For an involuntary change pass
+        deadline ("today", "tomorrow" or YYYY-MM-DD) as stated by the passenger; never compute dates yourself. For a
+        voluntary change pass target_date (the date the passenger wants). If the booking has no disruption and no
+        target_date, no_change_needed=true is returned: inform the passenger and ask whether they want to change the
+        date. blocking_reasons (for example POLICY_FARE_NOT_CHANGEABLE) mean the change is not allowed: explain and offer
+        a human handoff; do not try to execute. Asking for a different destination returns
+        DESTINATION_CHANGE_NOT_SUPPORTED: keep the context, explain, and offer a handoff. keep_current appears for
+        equipment downgrades (the current flights can be kept but seat assignments are lost). Retry once on a
+        retryable error, then offer a handoff.
+      parameters:
+        - name: pnr
+          in: path
+          required: true
+          description: Booking code of the identified booking (active_pnr).
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deadline:
+                  type: string
+                  description: Latest arrival day the passenger accepts for an involuntary change - "today", "tomorrow" or YYYY-MM-DD. Pass the passenger's words as "today"/"tomorrow" when they said so.
+                target_date:
+                  type: string
+                  format: date
+                  description: Desired travel date (YYYY-MM-DD) for a voluntary change.
+                destination:
+                  type: string
+                  description: Only if the passenger asks for a different destination (IATA code). Not supported; returns DESTINATION_CHANGE_NOT_SUPPORTED.
+      responses:
+        '200':
+          description: Options, or an error envelope.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RebookingOptions'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+  /rebookings:
+    post:
+      operationId: createRebooking
+      summary: Phase 2 - execute a confirmed quote (simulated payment)
+      description: >
+        Executes ONE quote atomically (check-in cancellation where required, new segments, extras, simulated payment).
+        Call it only after (1) you read back to the passenger, per passenger, the new flights, what happens to check-in,
+        which extras transfer or not and the total, and (2) the passenger explicitly said yes, restating the total when it
+        is above 0. Then send quote_id, confirmed=true, confirmed_total_ars equal to the quoted payment.total_ars, and
+        idempotency_key "rebook-<quote_id>". Nothing is changed unless every check passes: CONFIRMATION_REQUIRED,
+        TOTAL_MISMATCH, QUOTE_EXPIRED, QUOTE_STALE, QUOTE_NOT_FOUND and VOLUNTARY_CHANGES_DISABLED all mean NOTHING was
+        changed; for expired or stale quotes get fresh options and confirm again. A repeated call with the same key, or a
+        second yes for an already executed quote, returns the same result with already_applied=true: tell the passenger it
+        was already done and repeat the same confirmation_code; never imply a second change. On success report
+        confirmation_code, receipt_id (simulated payment, no real charge), the new itinerary, per_passenger actions
+        (redo_checkin), ancillary outcomes and pending items. Never claim anything not in the response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quote_id, confirmed, confirmed_total_ars, idempotency_key]
+              properties:
+                quote_id:
+                  type: string
+                  description: The quote_id of the option the passenger chose (from the latest getRebookingOptions).
+                confirmed:
+                  type: boolean
+                  description: Must be true, only after the passenger explicitly confirmed the read-back.
+                confirmed_total_ars:
+                  type: integer
+                  description: Total in ARS the passenger confirmed; must equal the option's payment.total_ars (0 for involuntary changes).
+                idempotency_key:
+                  type: string
+                  description: 'Use "rebook-" followed by the quote_id.'
+      responses:
+        '200':
+          description: Rebooking result, or an error envelope.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RebookingResult'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+  /handoff-cases:
+    post:
+      operationId: createHandoffCase
+      summary: Create a human handoff case with full context
+      description: >
+        Creates a case for a human agent. The backend attaches the booking snapshot, quotes offered or executed and
+        rebooking status, so the passenger never has to repeat anything; you only provide the reason and a short summary
+        of what was attempted and what is pending. Use it on an explicit request for a person (immediately, without
+        persuading), or after a failure path (policy block, no alternatives accepted, destination change, extras needing
+        review, repeated outage) once you explained what is pending. pnr may be omitted when the passenger is not
+        identified. Tell the passenger the case_id and that they will not need to repeat anything. Repeating the call with
+        the same idempotency_key returns the same case_id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, summary, idempotency_key]
+              properties:
+                reason:
+                  type: string
+                  description: 'Short reason code, for example user_request, policy_block, no_alternatives, destination_change, ancillary_review, upstream_failure, partial_party.'
+                summary:
+                  type: string
+                  description: One or two sentences on what the passenger wanted, what was done and what is pending.
+                pnr:
+                  type: string
+                  description: Booking code if identified; omit otherwise.
+                idempotency_key:
+                  type: string
+                  description: 'Format "handoff-<PNR or NOPNR>-<n>".'
+      responses:
+        '200':
+          description: Case created (or the existing case for the same key), or an error envelope.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/HandoffResult'
+                  - $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+  /policies/faq:
+    get:
+      operationId: searchFaq
+      summary: Open-ended airline FAQ with source
+      description: >
+        Answers general airline questions (baggage allowance, check-in, fare conditions, travel requirements, services)
+        from public airline information. Answer in one to three short sentences and name the source (title or
+        source_url). When verified=false add that the information must be confirmed on aerolineas.com.ar. If answers is
+        empty say you have no reliable information and offer a human handoff; never invent. Never use this endpoint to
+        decide fees, whether a change is allowed, or what happens to the passenger's extras: those come from
+        lookupBooking and getRebookingOptions.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: The passenger's question or keywords, in Spanish.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Answers with sources.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FaqResult'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+components:
+  responses:
+    InvalidRequest:
+      description: Malformed request (HTTP 400). Fix the parameters and call again.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [status, error_code]
+      properties:
+        status: { type: string, enum: [error] }
+        error_code:
+          type: string
+          description: Machine code, for example BOOKING_NOT_FOUND, UPSTREAM_TIMEOUT, QUOTE_EXPIRED, TOTAL_MISMATCH.
+        retryable: { type: boolean, description: 'True: retry the same call once.' }
+        agent_action: { type: string, description: Instruction on what to do next; follow it. }
+        details: { type: object, additionalProperties: true }
+    Leg:
+      type: object
+      properties:
+        flight_number: { type: string }
+        date: { type: string, format: date }
+        origin: { type: string }
+        destination: { type: string }
+        dep: { type: string, description: Local departure time HH:MM. }
+        arr: { type: string, description: Local arrival time HH:MM. }
+    AncillaryOutcome:
+      type: object
+      properties:
+        type: { type: string, enum: [extra_bag, seat_selection, priority_boarding, pet_in_cabin, sport_equipment] }
+        outcome: { type: string, enum: [transfers, transfers_with_fee, not_transferred, needs_review] }
+        note: { type: string }
+    Breakdown:
+      type: object
+      properties:
+        fee_ars: { type: integer }
+        fare_difference_ars: { type: integer }
+        ancillary_reissue_ars: { type: integer }
+    BookingView:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        pnr: { type: string }
+        passengers:
+          type: array
+          items:
+            type: object
+            properties:
+              passenger_id: { type: string }
+              first_name: { type: string }
+              last_name: { type: string }
+              type: { type: string, enum: [adult, minor, infant] }
+              checked_in: { type: boolean }
+              fare_family: { type: string, enum: [ECO_BASIC, ECO_PLUS, ECO_FLEX] }
+        segments:
+          type: array
+          items:
+            type: object
+            properties:
+              segment: { type: integer }
+              flight_number: { type: string }
+              date: { type: string }
+              origin: { type: string }
+              destination: { type: string }
+              departure: { type: string }
+              arrival: { type: string }
+              flight_status: { type: string, enum: [on_time, delayed, cancelled, schedule_changed] }
+              delay_minutes: { type: integer }
+        connection_status: { type: string, enum: [not_applicable, intact, broken] }
+        ancillaries:
+          type: array
+          items:
+            type: object
+            properties:
+              passenger_id: { type: string }
+              type: { type: string }
+              segments: { type: array, items: { type: string } }
+              paid_ars: { type: integer }
+              detail: { type: string }
+        disruption:
+          type: object
+          properties:
+            change_type_hint: { type: string, enum: [involuntary, voluntary] }
+            disruption_type: { type: string }
+            affected_segments: { type: array, items: { type: string } }
+    FlightStatus:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        flight_number: { type: string }
+        date: { type: string }
+        origin: { type: string }
+        destination: { type: string }
+        scheduled_departure: { type: string }
+        scheduled_arrival: { type: string }
+        flight_status: { type: string, enum: [on_time, delayed, cancelled, schedule_changed] }
+        delay_minutes: { type: integer }
+        schedule_change_minutes: { type: integer }
+        equipment_downgrade: { type: boolean }
+    RebookingOption:
+      type: object
+      properties:
+        option_id: { type: string, description: 'Letter to refer to the option with the passenger (A, B, C).' }
+        rank: { type: integer }
+        legs: { type: array, items: { $ref: '#/components/schemas/Leg' } }
+        arrival: { type: string }
+        arrives_by_deadline: { type: boolean }
+        fits_party: { type: boolean }
+        seats_available: { type: integer }
+        executable: { type: boolean, description: 'Only offer options with executable=true.' }
+        not_executable_reason: { type: string }
+        quote_id: { type: string, description: Present only when executable. }
+        expires_at: { type: string }
+        per_passenger:
+          type: array
+          items:
+            type: object
+            properties:
+              passenger_id: { type: string }
+              requires_checkin_cancellation: { type: boolean }
+              ancillaries: { type: array, items: { $ref: '#/components/schemas/AncillaryOutcome' } }
+        payment:
+          type: object
+          properties:
+            simulated: { type: boolean }
+            total_ars: { type: integer }
+            breakdown: { $ref: '#/components/schemas/Breakdown' }
+    RebookingOptions:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        change_type: { type: string, enum: [involuntary, voluntary] }
+        disruption_type: { type: string }
+        party_size: { type: integer, description: Seat-holding passengers (infants excluded). }
+        resolved_deadline_date: { type: string, nullable: true }
+        no_change_needed: { type: boolean }
+        options: { type: array, items: { $ref: '#/components/schemas/RebookingOption' } }
+        options_after_deadline: { type: array, items: { $ref: '#/components/schemas/RebookingOption' } }
+        blocking_reasons: { type: array, items: { type: string } }
+        next_availability:
+          type: object
+          nullable: true
+          properties:
+            date: { type: string }
+            option_id: { type: string }
+            flights: { type: array, items: { type: string } }
+        keep_current:
+          type: object
+          properties:
+            legs: { type: array, items: { $ref: '#/components/schemas/Leg' } }
+            seat_assignments_lost: { type: boolean }
+            note: { type: string }
+    RebookingResult:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        rebooking_id: { type: string }
+        confirmation_code: { type: string, description: Read this to the passenger. }
+        receipt_id: { type: string, description: Simulated receipt; no real charge. }
+        payment:
+          type: object
+          properties:
+            status: { type: string, enum: [simulated_paid] }
+            total_ars: { type: integer }
+            breakdown: { $ref: '#/components/schemas/Breakdown' }
+        verified: { type: boolean }
+        already_applied: { type: boolean, description: True when this quote was already executed; repeat the same confirmation_code. }
+        matched_by: { type: string }
+        new_itinerary: { type: array, items: { $ref: '#/components/schemas/Leg' } }
+        per_passenger:
+          type: array
+          items:
+            type: object
+            properties:
+              passenger_id: { type: string }
+              checkin_cancelled: { type: boolean }
+              action_required: { type: string, nullable: true, enum: [redo_checkin] }
+        ancillaries:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/AncillaryOutcome'
+              - type: object
+                properties:
+                  passenger_id: { type: string }
+        pending: { type: array, items: { type: string }, description: 'Items still pending, for example redo_checkin:P2, reselect_seat:P2.' }
+    HandoffResult:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        case_id: { type: string, description: Tell this to the passenger. }
+        already_applied: { type: boolean }
+    FaqResult:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        answers:
+          type: array
+          items:
+            type: object
+            properties:
+              text: { type: string }
+              title: { type: string }
+              source_url: { type: string }
+        source: { type: string, enum: [vertex_ai_search, curated_fallback] }
+        as_of: { type: string }
+        verified: { type: boolean }
