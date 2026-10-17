@@ -360,8 +360,16 @@ dependencies = [
     { name = "cxas-scrapi" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [{ name = "cxas-scrapi", specifier = ">=1.9.1" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "cryptography"

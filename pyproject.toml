@@ -5,3 +5,16 @@ requires-python = ">=3.12"
 dependencies = [
     "cxas-scrapi>=1.9.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "-m 'not billable'"
+markers = [
+    "billable: calls the CX Agent Studio platform / Gemini and costs credit (opt in with -m billable)",
+]
