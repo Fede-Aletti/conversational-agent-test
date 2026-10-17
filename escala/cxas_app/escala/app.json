@@ -8,7 +8,7 @@
     "set_session_outcome"
   ],
   "modelSettings": {
-    "model": "gemini-3-flash"
+    "model": "gemini-3.5-flash"
   },
   "languageSettings": {
     "defaultLanguageCode": "es-419"
