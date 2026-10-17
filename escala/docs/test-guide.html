@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escala — Cómo funciona y casos de prueba</title>
+<style>
+  :root{
+    --surface-0:#f4f3ef; --surface-1:#fcfcfb; --border:#dedcd5;
+    --text-primary:#0b0b0b; --text-secondary:#52514e; --muted:#7a7974;
+    --blue:#2a78d6; --blue-soft:#cde2fb; --green:#1baf7a; --green-soft:#d3f2e6;
+    --violet:#4a3aa7; --violet-soft:#e3dff7; --orange:#eb6834; --orange-soft:#fde3d8;
+    --grid:#e9e7e1;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --surface-0:#121211; --surface-1:#1a1a19; --border:#33322f;
+      --text-primary:#ffffff; --text-secondary:#c3c2b7; --muted:#9a998f;
+      --blue:#3987e5; --blue-soft:#17304f; --green:#199e70; --green-soft:#123a2c;
+      --violet:#9085e9; --violet-soft:#2a2550; --orange:#d95926; --orange-soft:#45230f;
+      --grid:#2a2a28;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface-0);color:var(--text-primary);
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  main{max-width:1120px;margin:0 auto;padding:32px 24px 64px}
+  h1{font-size:26px;margin:0 0 4px;color:var(--foreground,var(--text-primary))}
+  h2{font-size:19px;margin:40px 0 4px;color:var(--foreground,var(--text-primary))}
+  .sub{color:var(--muted-foreground,var(--text-secondary));margin:0 0 16px}
+  .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:20px}
+
+  /* Architecture diagram */
+  .arch{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;align-items:stretch}
+  .node{border-radius:10px;padding:12px;border:1px solid var(--border);position:relative}
+  .node h3{margin:0 0 4px;font-size:14px}
+  .node p{margin:0;font-size:12.5px;color:var(--text-secondary)}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:99px;margin-bottom:6px}
+  .llm{background:var(--blue-soft)} .llm .tag{background:var(--blue);color:#fff}
+  .code{background:var(--green-soft)} .code .tag{background:var(--green);color:#fff}
+  .guard{background:var(--violet-soft)} .guard .tag{background:var(--violet);color:#fff}
+  .user{background:var(--orange-soft)} .user .tag{background:var(--orange);color:#fff}
+  .arrow{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:20px}
+  .row{display:grid;grid-template-columns:1fr 28px 1fr 28px 1fr 28px 1fr 28px 1fr;align-items:stretch;gap:0}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--text-secondary)}
+  .legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+  .under{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+
+  /* Sequence */
+  ol.seq{list-style:none;margin:0;padding:0;counter-reset:s}
+  ol.seq li{counter-increment:s;display:grid;grid-template-columns:34px 130px 1fr;gap:10px;
+            padding:9px 0;border-top:1px solid var(--grid);align-items:start}
+  ol.seq li:first-child{border-top:0}
+  ol.seq li::before{content:counter(s);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+            font-size:12px;font-weight:700;background:var(--surface-0);border:1px solid var(--border)}
+  .who{font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;text-align:center;align-self:start}
+  .seq .what{font-size:13.5px} .seq code{font-size:12px}
+
+  /* Chart */
+  .chart-wrap{position:relative}
+  svg text{fill:var(--text-secondary);font-size:12px}
+  svg .lbl{fill:var(--text-primary);font-size:12.5px}
+  svg .val{fill:var(--text-primary);font-size:12px;font-weight:600}
+  .bar{fill:var(--blue)}
+  .hit:hover + .bar, .bar.on{fill:#1c5cab}
+  #tip{position:absolute;pointer-events:none;background:var(--surface-1);border:1px solid var(--border);
+       border-radius:8px;padding:8px 10px;font-size:12.5px;box-shadow:0 4px 16px rgba(0,0,0,.12);
+       max-width:280px;opacity:0;transition:opacity .1s}
+  #tip b{display:block;margin-bottom:2px}
+
+  /* Table */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .filters button{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);
+       border-radius:99px;padding:4px 12px;font-size:13px;cursor:pointer}
+  .filters button.on{background:var(--text-primary);color:var(--surface-1)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:12px;color:var(--text-secondary);font-weight:600;border-bottom:1px solid var(--border);padding:8px 6px}
+  td{border-top:1px solid var(--grid);padding:8px 6px;vertical-align:top}
+  td.pnr{font-family:ui-monospace,Menlo,monospace;font-weight:600;white-space:nowrap}
+  td.say{font-style:italic}
+  .pill{font-size:11px;padding:1px 7px;border-radius:99px;background:var(--surface-0);border:1px solid var(--border);white-space:nowrap}
+  .note{font-size:12.5px;color:var(--text-secondary);margin-top:10px}
+  @media (max-width:860px){.row{grid-template-columns:1fr}.row .arrow{transform:rotate(90deg);height:24px}.under{grid-template-columns:1fr}
+    ol.seq li{grid-template-columns:34px 1fr}.seq .who{grid-column:2}.seq .what{grid-column:2}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Escala — cómo funciona y qué probar</h1>
+  <p class="sub">Prototipo experimental. Datos simulados. El LLM entiende y explica; el código decide.</p>
+
+  <h2>1. Arquitectura</h2>
+  <p class="sub">Cada decisión de negocio sale del backend. El modelo nunca calcula precios, asientos ni reglas.</p>
+  <div class="card">
+    <div class="row">
+      <div class="node user"><span class="tag">Pasajero</span><h3>Chat o voz</h3><p>Simulador de CX Agent Studio. Idioma es-419, tono rioplatense.</p></div>
+      <div class="arrow">→</div>
+      <div class="node llm"><span class="tag">LLM</span><h3>root_agent</h3><p>Aviso de prototipo, identificación (PNR + apellido), consultas de políticas, derivación.</p></div>
+      <div class="arrow">→</div>
+      <div class="node llm"><span class="tag">LLM</span><h3>disruption_rebooking_agent</h3><p>Dueño del caso completo: incidencia → opciones → confirmación → resultado. Responde equipaje en el medio.</p></div>
+      <div class="arrow">→</div>
+      <div class="node code"><span class="tag">Código</span><h3>OpenAPI toolset <code>escala_api</code></h3><p>6 operaciones. Auth con ID token del service agent de CES.</p></div>
+      <div class="arrow">→</div>
+      <div class="node code"><span class="tag">Código</span><h3>Cloud Function + Firestore</h3><p>Reservas, operaciones, equipaje, reglas, derivación. 141 reservas, 363 vuelos simulados.</p></div>
+    </div>
+    <div class="under">
+      <div class="node guard"><span class="tag">Guardrail en código</span><h3>Callbacks</h3><p><b>before_tool</b>: bloquea <code>createRebooking</code> si el pasajero no confirmó esa opción y ese monto. <b>after_tool</b>: guarda PNR, opciones ofrecidas y resultado de la sesión. <b>after_model</b>: aviso de prototipo una sola vez.</p></div>
+      <div class="node code"><span class="tag">Código</span><h3>Confirmación en dos fases + idempotencia</h3><p>Cada opción trae un <code>quote_id</code> que vence a los 15 min. Ejecutar exige quote + confirmación + total + clave de idempotencia. Repetir devuelve el mismo resultado.</p></div>
+    </div>
+    <div class="legend">
+      <span style="--c:var(--orange)">Pasajero</span>
+      <span style="--c:var(--blue)">LLM (entiende y explica)</span>
+      <span style="--c:var(--green)">Código determinista (decide)</span>
+      <span style="--c:var(--violet)">Guardrail</span>
+    </div>
+  </div>
+
+  <h2>2. Recorrido del caso principal (RMR4TX)</h2>
+  <p class="sub">Córdoba → Aeroparque → Bariloche, primer vuelo cancelado, 2 pasajeros, uno con check-in, equipaje extra.</p>
+  <div class="card">
+    <ol class="seq">
+      <li><span class="who user">Pasajero</span><span class="what">Cuenta el problema (mensaje del PRD).</span></li>
+      <li><span class="who llm">root_agent</span><span class="what">Aviso de prototipo + pide código de reserva y apellido. Nada más.</span></li>
+      <li><span class="who code">Backend</span><span class="what"><code>lookupBooking(RMR4TX, Romero)</code> → 2 pasajeros, Benítez con check-in, AR1561 cancelado.</span></li>
+      <li><span class="who llm">rebooking</span><span class="what">Resume lo entendido en una frase y pide opciones.</span></li>
+      <li><span class="who code">Backend</span><span class="what"><code>getRebookingOptions(deadline: mañana)</code> → A directo AR1880 (11:40), B vía AEP (12:05), C no entra para los dos. Cada opción ejecutable trae <code>quote_id</code>.</span></li>
+      <li><span class="who llm">rebooking</span><span class="what">Presenta A y B, explica por qué C no sirve. El pasajero elige.</span></li>
+      <li><span class="who llm">rebooking</span><span class="what">Read-back por pasajero: check-in de Benítez se cancela, equipaje se transfiere, asientos no, total $0. Pide "sí" explícito.</span></li>
+      <li><span class="who guard">Guardrail</span><span class="what"><code>record_quote_confirmation</code> + callback valida quote y total antes de dejar pasar la ejecución.</span></li>
+      <li><span class="who code">Backend</span><span class="what"><code>createRebooking</code> en una transacción: cancela check-in, mueve asientos y equipaje, verifica lo escrito, devuelve código y comprobante.</span></li>
+      <li><span class="who llm">rebooking</span><span class="what">Informa nuevo itinerario, estado de cada servicio y pendientes (rehacer check-in, elegir asiento). Cierra.</span></li>
+    </ol>
+  </div>
+
+  <h2>3. Top 10 casos para probar primero</h2>
+  <p class="sub">Prioridad sugerida (1–10) según qué tan crítico es el comportamiento para el PRD. Pasá el mouse por cada barra.</p>
+  <div class="card chart-wrap">
+    <svg id="chart" width="100%" viewBox="0 0 720 450" role="img" aria-label="Ranking de los 10 casos más importantes para probar"></svg>
+    <div id="tip"></div>
+  </div>
+
+  <h2>4. Todos los casos</h2>
+  <p class="sub">Usá estos datos en el simulador. El apellido va junto con el código de reserva.</p>
+  <div class="card">
+    <div class="filters" id="filters"></div>
+    <table>
+      <thead><tr><th>#</th><th>Caso</th><th>PNR</th><th>Apellido</th><th>Qué decir</th><th>Qué tiene que pasar</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="note">Hay además 120 reservas generadas (<code>GEN-0001</code>…<code>GEN-0120</code>) con combinaciones de pasajeros, tarifas, servicios e incidencias. Las fechas de los vuelos simulados están entre nov-2026 y may-2027.</p>
+  </div>
+</main>
+
+<script>
+const CASES = [
+  {g:"Principal", n:"Cancelación + conexión + 2 pasajeros", pnr:"RMR4TX", ap:"Romero", say:"Hola, viajamos dos de Córdoba a Bariloche con escala en Aeroparque. Me cancelaron el primer vuelo y necesito llegar mañana como máximo. Mi pareja ya hizo el check-in y pagamos equipaje adicional. ¿Nos podés cambiar a los dos sin perder lo que pagamos?", exp:"Ofrece A (directo) y B (vía AEP), descarta C. Read-back por pasajero, pide sí, ejecuta una vez, informa código, comprobante y pendientes.", p:10, why:"Es la demo del PRD: cruza reservas, incidencias, equipaje y check-in."},
+  {g:"Confiabilidad", n:"Confirmación duplicada", pnr:"DP4N8S", ap:"Luna", say:"Me cancelaron el vuelo a Mendoza → (después de ejecutar) “sí, confirmá” otra vez", exp:"Segunda confirmación no cambia nada: “ya lo hicimos, tu código sigue siendo …”.", p:9, why:"Operaciones duplicadas son un criterio de fallo explícito del PRD."},
+  {g:"Operaciones", n:"Cambio voluntario con pago simulado", pnr:"NV8C5R", ap:"Sosa", say:"Quiero pasar mi vuelo del 14 al 15", exp:"Desglosa cargo 25.000 + diferencia 10.000 + equipaje 10.000 = $45.000 simulados. Exige confirmar el monto. Devuelve comprobante.", p:9, why:"Prueba el pago simulado y la confirmación del total."},
+  {g:"Errores", n:"Servicio que no responde", pnr:"SV2T7K", ap:"Quiroga", say:"¿Cómo está mi vuelo a Bariloche de hoy?", exp:"Reintenta una vez, después dice que el sistema no responde, no inventa estado y ofrece derivación.", p:8, why:"Recuperación ante fallos sin inventar resultados."},
+  {g:"Errores", n:"Sin vuelos alternativos", pnr:"TB6H1Y", ap:"Molina", say:"Me cancelaron el vuelo de Mendoza, necesito llegar mañana", exp:"Dice que nada llega mañana, ofrece el AR1306 del 15/11 aclarando que no cumple el plazo, o derivación.", p:8, why:"Manejo de excepciones: no inventar disponibilidad."},
+  {g:"Reglas", n:"Política impide el cambio", pnr:"PB9K4Z", ap:"Giménez", say:"Quiero cambiar mi vuelo a Iguazú para otro día", exp:"Explica que la tarifa ECO_BASIC no permite cambios, cita la fuente, no ejecuta nada, ofrece alternativas.", p:8, why:"Cumplimiento de reglas."},
+  {g:"Derivación", n:"Pide hablar con una persona", pnr:"—", ap:"—", say:"Quiero hablar con una persona", exp:"Deriva de inmediato, sin insistir. Da número de caso y “no vas a tener que repetir nada”.", p:7, why:"Derivación contextual."},
+  {g:"Identificación", n:"No encuentra la reserva", pnr:"QWE4RT", ap:"cualquiera", say:"Mi código es QWE4RT", exp:"No la encuentra, pide revisar una vez, luego ofrece buscar por apellido + fecha + ruta.", p:7, why:"Recuperación e identificación."},
+  {g:"Identificación", n:"Búsqueda alternativa", pnr:"LQ3W9D", ap:"Ferreyra", say:"Código LQ3W9B (mal) → después: Ferreyra, 14 de noviembre, Aeroparque a Mendoza", exp:"Con el código mal falla; con apellido + fecha + ruta la encuentra.", p:7, why:"Recuperación e identificación."},
+  {g:"Contexto", n:"Cambia el destino a mitad de charla", pnr:"NV8C5R", ap:"Sosa", say:"Quiero pasar mi vuelo al 15 → “mejor cambiame el destino a Ushuaia”", exp:"Mantiene el contexto, explica que cambiar destino no se puede acá, ofrece seguir con el cambio de fecha o derivar.", p:7, why:"Gestión de contexto."},
+  {g:"Contexto", n:"Interrumpe para preguntar equipaje", pnr:"RMR4TX", ap:"Romero", say:"(con las opciones en pantalla) “¿y la valija extra que pagamos qué pasa?”", exp:"Responde sobre el equipaje con datos de la reserva y vuelve: “volviendo a tu cambio…”.", p:6, why:"Continuidad conversacional."},
+  {g:"Pasajeros", n:"Dos pasajeros, condiciones distintas", pnr:"RMR4TX", ap:"Romero", say:"Caso principal: preguntá qué pasa con el check-in de cada uno", exp:"Distingue: Romero sin check-in, Benítez con check-in que se cancela y debe rehacer.", p:6, why:"Razonamiento con múltiples restricciones."},
+  {g:"Operaciones", n:"Conexión perdida por demora", pnr:"MC5W9G", ap:"Duarte", say:"Mi primer vuelo sale demorado, ¿llego a la conexión?", exp:"Demora de 100 min rompe la conexión mínima: lo trata como cambio involuntario y ofrece opciones sin costo.", p:6, why:"Impacto sobre el viaje completo, no solo un tramo."},
+  {g:"Pasajeros", n:"Mascota en cabina", pnr:"PW6J8X", ap:"Pereyra", say:"Me cancelaron el vuelo, viajo con mi perro en cabina", exp:"La opción no es ejecutable por la mascota; explica por qué y deriva.", p:6, why:"No asumir que un servicio se transfiere."},
+  {g:"Pasajeros", n:"Adulto con bebé", pnr:"KT5M2V", ap:"Aguirre", say:"Me cancelaron el vuelo, viajo con mi bebé", exp:"El bebé no ocupa asiento ni tiene servicios; viaja con el adulto en el nuevo vuelo.", p:5, why:"Pasajeros especiales."},
+  {g:"Pasajeros", n:"Familia con menor, asientos parciales", pnr:"HN7D4C", ap:"Navarro", say:"Somos tres, nos cancelaron el vuelo", exp:"La mejor opción tiene 2 de 3 asientos: no la ofrece como ejecutable para todos.", p:5, why:"Grupo no se separa sin aviso."},
+  {g:"Pasajeros", n:"Tres pasajeros, asientos limitados", pnr:"PS8N4W", ap:"Sandoval", say:"Nos cancelaron el vuelo, somos tres", exp:"Prioriza la opción donde entran los tres aunque sea más tarde.", p:5, why:"Ranking por grupo completo."},
+  {g:"Operaciones", n:"Equipaje deportivo + prioridad (voluntario)", pnr:"SQ9R3F", ap:"Cornejo", say:"Quiero cambiar la fecha de mi vuelo", exp:"Incluye cargo de reemisión del equipo deportivo; aclara que el embarque prioritario no se transfiere.", p:4, why:"Reglas de transferencia por servicio."},
+  {g:"Operaciones", n:"Tarifa Plus, cambio voluntario", pnr:"PL3T5R", ap:"Villarreal", say:"Queremos cambiar la fecha, somos dos", exp:"Cargo de 45.000 por pasajero + diferencia; pide confirmar el total.", p:4, why:"Cálculo por tarifa."},
+  {g:"Operaciones", n:"Demora chica", pnr:"DL4B6N", ap:"Luque", say:"Mi vuelo está demorado", exp:"90 min, sin impacto en conexiones: informa, no hace falta cambiar. Puede ofrecer opciones.", p:4, why:"No sobre-reaccionar."},
+  {g:"Operaciones", n:"Demora grande", pnr:"DL8H2P", ap:"Montiel", say:"Mi vuelo está demorado", exp:"180 min: cambio involuntario, ofrece opciones sin costo.", p:5, why:"Umbral de involuntario."},
+  {g:"Operaciones", n:"Cambio de horario", pnr:"SC3K7T", ap:"Salvatierra", say:"Me cambiaron el horario del vuelo", exp:"120 min: involuntario, ofrece alternativas.", p:4, why:"Reprogramación por la aerolínea."},
+  {g:"Operaciones", n:"Cambio de avión", pnr:"ED2V6Z", ap:"Castañeda", say:"Me dijeron que cambiaron el avión", exp:"Se pierden los asientos elegidos; ofrece mantener el vuelo o alternativas.", p:4, why:"Downgrade de equipo."},
+  {g:"Operaciones", n:"Internacional regional cancelado", pnr:"XN7B2K", ap:"Arriaga", say:"Nos cancelaron el vuelo a Montevideo", exp:"Opciones + nota sobre documentación de viaje con fuente.", p:5, why:"Requisitos de viaje."},
+  {g:"Errores", n:"Error del servidor", pnr:"UE4Q8H", ap:"Olmos", say:"¿Cómo está mi vuelo?", exp:"Reintenta una vez; si sigue, informa y ofrece derivación.", p:5, why:"Fallo 5xx simulado."},
+  {g:"Errores", n:"Servicio lento", pnr:"SL6Y3M", ap:"Peralta", say:"¿Cómo está mi vuelo?", exp:"Dice “un momento” y responde normal (~8 s), sin reintentar.", p:3, why:"Latencia."},
+  {g:"Consultas", n:"Pregunta de políticas", pnr:"—", ap:"—", say:"¿Cuánto equipaje de mano puedo llevar?", exp:"Responde corto con la fuente; si no está verificado aclara “a confirmar en aerolineas.com.ar”.", p:5, why:"Respuestas fundamentadas."},
+];
+
+/* Top 10 chart */
+(function(){
+  const top = [...CASES].sort((a,b)=>b.p-a.p).slice(0,10);
+  const svg = document.getElementById('chart'), tip = document.getElementById('tip');
+  const W=720, L=300, R=40, T=10, rowH=40, barH=22, max=10, plotW=W-L-R;
+  const ns='http://www.w3.org/2000/svg', el=(t,a)=>{const e=document.createElementNS(ns,t);for(const k in a)e.setAttribute(k,a[k]);return e};
+  for(let v=0; v<=10; v+=2){
+    const x=L+plotW*v/max;
+    svg.appendChild(el('line',{x1:x,x2:x,y1:T,y2:T+rowH*top.length,stroke:'var(--grid)','stroke-width':1}));
+    const t=el('text',{x, y:T+rowH*top.length+18,'text-anchor':'middle'}); t.textContent=v; svg.appendChild(t);
+  }
+  top.forEach((c,i)=>{
+    const y=T+i*rowH+(rowH-barH)/2, w=Math.max(4,plotW*c.p/max);
+    const lab=el('text',{x:L-12,y:y+barH/2+4,'text-anchor':'end',class:'lbl'});
+    lab.textContent=`${i+1}. ${c.n}${c.pnr!=='—'?' · '+c.pnr:''}`; svg.appendChild(lab);
+    const hit=el('rect',{x:0,y:T+i*rowH,width:W,height:rowH,fill:'transparent',class:'hit'});
+    const bar=el('path',{class:'bar',d:`M${L},${y} h${w-4} a4,4 0 0 1 4,4 v${barH-8} a4,4 0 0 1 -4,4 h-${w-4} z`});
+    const val=el('text',{x:L+w+8,y:y+barH/2+4,class:'val'}); val.textContent=c.p;
+    svg.append(hit,bar,val);
+    hit.addEventListener('mousemove',ev=>{
+      bar.classList.add('on');
+      tip.innerHTML=`<b>${c.n}</b>${c.pnr!=='—'?`PNR ${c.pnr} · ${c.ap}<br>`:''}Prioridad ${c.p}/10<br>${c.why}`;
+      const r=svg.parentElement.getBoundingClientRect();
+      tip.style.left=Math.min(ev.clientX-r.left+14, r.width-290)+'px'; tip.style.top=(ev.clientY-r.top+14)+'px'; tip.style.opacity=1;
+    });
+    hit.addEventListener('mouseleave',()=>{bar.classList.remove('on');tip.style.opacity=0});
+  });
+  const ax=el('text',{x:L+plotW/2,y:T+rowH*top.length+38,'text-anchor':'middle'}); ax.textContent='Prioridad sugerida (1–10)'; svg.appendChild(ax);
+})();
+
+/* Table + filters */
+(function(){
+  const groups=['Todos',...new Set(CASES.map(c=>c.g))];
+  const f=document.getElementById('filters'), tb=document.getElementById('rows');
+  let cur='Todos';
+  function render(){
+    tb.innerHTML=CASES.filter(c=>cur==='Todos'||c.g===cur).map((c,i)=>
+      `<tr><td>${i+1}</td><td><b>${c.n}</b><br><span class="pill">${c.g}</span></td><td class="pnr">${c.pnr}</td><td>${c.ap}</td><td class="say">${c.say}</td><td>${c.exp}</td></tr>`).join('');
+    [...f.children].forEach(b=>b.classList.toggle('on',b.textContent===cur));
+  }
+  groups.forEach(g=>{const b=document.createElement('button');b.textContent=g;b.onclick=()=>{cur=g;render()};f.appendChild(b)});
+  render();
+})();
+</script>
+</body>
+</html>
