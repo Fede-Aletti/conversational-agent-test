@@ -440,5 +440,6 @@ Opening utterance for CUJ-01 (PRD 5, verbatim): "Hola, viajamos dos de Córdoba 
 | 2026-10-17 | Rev 3 (APPROVED by product owner): backend declared MOCK; scenario catalog (22 named fixtures) + seeded generator (~120 bookings) + flag-gated `GET /scenarios`; "Conversation flows" section (F-01..F-13 with backend call sequences); voluntary changes ENABLED by default with simulated payment (confirm total, `receipt_id`); Blaze/billing resolved; coverage CUJ-21..25 | tdd-writer |
 | 2026-10-17 | Rev 4: `handoff_agent` replaced by `createHandoffCase` tool in both agents (lint S007: single parent) | build |
 | 2026-10-17 | Rev 5: FSM-driven dynamic instructions: `fsm_state` computed by `track_state` (pure `next_fsm`), per-state step text injected via `{fsm_instructions}` by a `before_model` callback; short core instructions to cut per-turn tokens | build |
+| 2026-10-17 | Rev 6: lean CES toolset schema (23,294 -> 5,176 chars, ~5.8k -> ~1.3k tokens per call); backend `openapi.yaml` stays the rich source, drift guarded by `tests/test_openapi_sync.py` | build |
 
 Review and approve before scaffolding the agent.
