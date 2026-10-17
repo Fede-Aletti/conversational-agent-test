@@ -1,0 +1,26 @@
+{
+  "name": "escala-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Escala mock airline backend (Firebase Functions 2nd gen, Firestore)",
+  "main": "lib/src/index.js",
+  "engines": { "node": "20 || 22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "firebase emulators:exec --only firestore --project demo-escala \"vitest run -c vitest.integration.config.ts\"",
+    "seed:emulator": "npm run build && node lib/seed/seed.js --emulator --reset",
+    "seed:project": "npm run build && node lib/seed/seed.js --project"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.9.0",
+    "vitest": "^3.0.0",
+    "yaml": "^2.0.0"
+  }
+}

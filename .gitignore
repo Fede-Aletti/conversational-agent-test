@@ -6,3 +6,11 @@ __pycache__/
 # Local eval/run artifacts
 **/reports/
 .pytest_cache/
+
+# escala backend
+escala/backend/functions/node_modules/
+escala/backend/functions/lib/
+escala/backend/**/firestore-debug.log
+escala/backend/**/firebase-debug.log
+escala/backend/**/ui-debug.log
+escala/backend/**/.firebase/
