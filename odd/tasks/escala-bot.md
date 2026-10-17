@@ -28,7 +28,7 @@ Demonstrate an agent that resolves multi-domain passenger problems (cancellation
 - [x] T4 Infra (done: Firebase added, APIs, Firestore us-central1, function deployed nodejs22 at https://api-nam423zy2q-uc.a.run.app, seeded 141 bookings, smoke test OK, unauth 403; commits 0f3601b, 43be5a5; roles/run.invoker granted to service-836062363380@gcp-sa-ces; audio bucket gs://escala-audio-gen-lang-client-0907599903 (30d lifecycle)): add Firebase to GCP project, enable APIs, choose Firestore location, deploy function, seed, IAM for CES invoker — inline (state/CLI).
 - [x] T5 Scaffold CES app — delegated scaffolder. Commit bb254c9. Evidence: pytest 25 passed, 1 failed (lint test: S007 handoff_agent two parents, V001).
 - [x] T6 Replaced handoff_agent with deterministic createHandoffCase tool in both agents (S007) + lint clean — delegated writer. Commit bc0bf36. Evidence: lint 0/0, pytest 24 passed.
-- [ ] T7 Manual lint + `cxas push`; verify the 4 open platform behaviors with `cxas test-tools` (non-LLM) — inline.
+- [x] T7 Manual lint + `cxas push` (language es-AR rejected by CES -> es-419). Verified non-LLM: OpenAPI tool names are `escala_api_<operationId>`; service-agent ID-token auth to the private function works (execute_tool lookupBooking RMR4TX ok); domain errors use HTTP 200 envelope. Pending (needs an LLM session, billable): before_tool short-circuit of an OpenAPI tool, after_tool response shape in live sessions.
 
 ## Acceptance criteria
 - Backend tests green; every TDD CUJ has a scenario fixture.
@@ -39,4 +39,4 @@ Demonstrate an agent that resolves multi-domain passenger problems (cancellation
 - 2026-10-17: TDD approved by product owner (Firebase mock backend, journey-based agents, voluntary changes ON).
 
 ## Next step
-T6 lint, then T7 push + platform behavior checks, then T3b.
+T3b backend follow-ups. Optional (billable, user opt-in): voice/text session of F-01 demo to verify callback guard and collect recordings.
