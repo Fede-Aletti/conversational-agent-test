@@ -1,0 +1,7 @@
+[project]
+name = "conversational-agent-test"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "cxas-scrapi>=1.9.1",
+]

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.atl/
+.DS_Store
+# Local eval/run artifacts
+**/reports/

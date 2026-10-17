@@ -1,0 +1,20 @@
+{
+  "gcp_project_id": "gen-lang-client-0907599903",
+  "location": "us",
+  "app_name": "escala",
+  "deployed_app_id": "escala",
+  "app_dir": "cxas_app/",
+  "model": "gemini-3-flash",
+  "modality": "text",
+  "default_channel": "text",
+  "environments": {
+    "dev": {
+      "app_id": "escala",
+      "description": "Development/sandbox app"
+    },
+    "prod": {
+      "app_id": null,
+      "description": "Production app (not yet configured)"
+    }
+  }
+}
