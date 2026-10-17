@@ -1,0 +1,35 @@
+tests:
+  - name: sets_resolved
+    tool: set_session_outcome
+    args: {outcome: resolved}
+    expectations:
+      response:
+        - {path: "$.result.status", operator: equals, value: success}
+      variables:
+        - {path: "$.session_outcome", operator: equals, value: resolved}
+  - name: sets_failed_normalizing_case
+    tool: set_session_outcome
+    args: {outcome: " Failed "}
+    expectations:
+      response:
+        - {path: "$.result.session_outcome", operator: equals, value: failed}
+      variables:
+        - {path: "$.session_outcome", operator: equals, value: failed}
+  - name: rejects_unknown_outcome
+    tool: set_session_outcome
+    args: {outcome: banana}
+    expectations:
+      response:
+        - {path: "$.result.error_code", operator: equals, value: INVALID_OUTCOME}
+        - {path: "$.result.agent_action", operator: is_not_null}
+      variables:
+        - {path: "$.session_outcome", operator: is_null}
+  - name: does_not_overwrite_handed_off
+    tool: set_session_outcome
+    args: {outcome: resolved}
+    variables: {session_outcome: handed_off}
+    expectations:
+      response:
+        - {path: "$.result.session_outcome", operator: equals, value: handed_off}
+      variables:
+        - {path: "$.session_outcome", operator: equals, value: handed_off}

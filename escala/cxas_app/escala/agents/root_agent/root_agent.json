@@ -1,0 +1,16 @@
+{
+  "name": "root_agent",
+  "displayName": "root_agent",
+  "description": "Entry agent: greeting, booking identification, open FAQ and triage to the rebooking journey or the human handoff.",
+  "instruction": "agents/root_agent/instruction.txt",
+  "tools": ["end_session"],
+  "toolsets": [
+    {
+      "toolset": "escala_api",
+      "toolIds": ["lookupBooking", "searchFaq"]
+    }
+  ],
+  "childAgents": ["disruption_rebooking_agent", "handoff_agent"],
+  "afterModelCallbacks": [{"pythonCode": "agents/root_agent/after_model_callbacks/inject_disclaimer/python_code.py"}],
+  "afterToolCallbacks": [{"pythonCode": "agents/root_agent/after_tool_callbacks/track_state/python_code.py"}]
+}

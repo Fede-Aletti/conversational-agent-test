@@ -1,0 +1,17 @@
+{
+  "name": "disruption_rebooking_agent",
+  "displayName": "disruption_rebooking_agent",
+  "description": "Owns the whole disruption and change journey for an identified booking: status, options, read-back, explicit confirmation, execution and result. Also answers baggage and extras questions inline.",
+  "instruction": "agents/disruption_rebooking_agent/instruction.txt",
+  "tools": ["record_quote_confirmation", "set_session_outcome", "end_session"],
+  "toolsets": [
+    {
+      "toolset": "escala_api",
+      "toolIds": ["lookupBooking", "getFlightStatus", "getRebookingOptions", "createRebooking", "searchFaq"]
+    }
+  ],
+  "childAgents": ["handoff_agent"],
+  "afterModelCallbacks": [{"pythonCode": "agents/disruption_rebooking_agent/after_model_callbacks/inject_disclaimer/python_code.py"}],
+  "beforeToolCallbacks": [{"pythonCode": "agents/disruption_rebooking_agent/before_tool_callbacks/guard_mutating_calls/python_code.py"}],
+  "afterToolCallbacks": [{"pythonCode": "agents/disruption_rebooking_agent/after_tool_callbacks/track_state/python_code.py"}]
+}

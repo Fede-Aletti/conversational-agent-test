@@ -1,0 +1,10 @@
+{
+  "name": "record_quote_confirmation",
+  "pythonFunction": {
+    "name": "record_quote_confirmation",
+    "pythonCode": "tools/record_quote_confirmation/python_function/python_code.py",
+    "description": "Records the passenger's explicit confirmation of one offered quote and its total amount in ARS. Call it only after reading back the change and hearing an explicit yes (restating the total when it is above 0), and before createRebooking. It only accepts a quote offered by the latest rebooking options and the exact offered total."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "record_quote_confirmation"
+}

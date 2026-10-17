@@ -1,0 +1,10 @@
+{
+  "name": "set_session_outcome",
+  "pythonFunction": {
+    "name": "set_session_outcome",
+    "pythonCode": "tools/set_session_outcome/python_function/python_code.py",
+    "description": "Records the analytics outcome of the session: resolved when the passenger's request was completed, failed when the passenger left with nothing resolved and no handoff. Call it once, right before the farewell. A handoff is recorded automatically."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "set_session_outcome"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "handoff_agent",
+  "displayName": "handoff_agent",
+  "description": "Terminal agent: creates the human handoff case with full context, tells the passenger the case id, and closes the session.",
+  "instruction": "agents/handoff_agent/instruction.txt",
+  "tools": ["set_session_outcome", "end_session"],
+  "toolsets": [
+    {
+      "toolset": "escala_api",
+      "toolIds": ["createHandoffCase"]
+    }
+  ],
+  "afterModelCallbacks": [{"pythonCode": "agents/handoff_agent/after_model_callbacks/inject_disclaimer/python_code.py"}],
+  "afterToolCallbacks": [{"pythonCode": "agents/handoff_agent/after_tool_callbacks/track_state/python_code.py"}]
+}

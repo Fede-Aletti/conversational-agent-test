@@ -1,0 +1,15 @@
+{
+  "_comment_auth": [
+    "CONFIRM AT PUSH: auth uses serviceAgentIdTokenAuthConfig (empty object, per api-schemas/tools.md).",
+    "The CES service agent principal must hold roles/run.invoker on the 2nd gen Cloud Function 'api' (Cloud Run service); identify the exact principal in the project, do not assume it.",
+    "Fallback if ID-token auth is rejected: apiKeyConfig with a Secret Manager key validated by the function."
+  ],
+  "displayName": "escala_api",
+  "description": "Escala airline mock backend (Cloud Function api). Identification, flight status, rebooking options and execution with simulated payment, human handoff cases and FAQ. All decisions are made by the backend; follow each response's agent_action.",
+  "openApiToolset": {
+    "openApiSchema": "toolsets/escala_api/open_api_toolset/open_api_schema.yaml",
+    "apiAuthentication": {
+      "serviceAgentIdTokenAuthConfig": {}
+    }
+  }
+}

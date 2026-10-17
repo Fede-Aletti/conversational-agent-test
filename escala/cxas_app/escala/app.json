@@ -1,13 +1,96 @@
 {
   "name": "escala",
   "displayName": "escala",
-  "description": "Escala conversational agent (text + voice)",
+  "description": "Escala conversational agent (text + voice): airline disruption rebooking, handoff and FAQ over a mock backend",
+  "rootAgent": "root_agent",
+  "tools": [
+    "record_quote_confirmation",
+    "set_session_outcome"
+  ],
+  "modelSettings": {
+    "model": "gemini-3-flash"
+  },
+  "languageSettings": {
+    "defaultLanguageCode": "es-AR"
+  },
   "loggingSettings": {
     "conversationLoggingSettings": {
       "retentionWindow": "31536000s"
+    },
+    "audioRecordingConfig": {
+      "gcsBucket": "gs://escala-audio-gen-lang-client-0907599903"
+    },
+    "evaluationAudioRecordingConfig": {
+      "gcsBucket": "gs://escala-audio-gen-lang-client-0907599903"
     }
   },
   "timeZoneSettings": {
     "timeZone": "America/Argentina/Buenos_Aires"
-  }
+  },
+  "variableDeclarations": [
+    {
+      "name": "channel",
+      "description": "Session channel, text or voice. Optional; used for tone only.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "active_pnr",
+      "description": "Booking code (PNR) of the identified booking. Set by the after-tool callback on a successful lookupBooking.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "offered_quotes",
+      "description": "JSON object mapping each quote_id offered by the latest getRebookingOptions to its expires_at. Set by the after-tool callback; never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "offered_totals",
+      "description": "JSON object mapping each offered quote_id to its payment.total_ars. Set by the after-tool callback together with offered_quotes; never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "confirmed_quote_id",
+      "description": "quote_id the passenger explicitly confirmed. Set by record_quote_confirmation, cleared when options are re-fetched or the rebooking is executed; never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "confirmed_total_ars",
+      "description": "Total in ARS the passenger confirmed together with confirmed_quote_id, stored as a string. Never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "session_outcome",
+      "description": "Analytics outcome of the session: resolved, handed_off or failed.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "_disclaimer_shown",
+      "description": "Internal flag, the string true once the experimental disclaimer was spoken. Never set in evals.",
+      "schema": {
+        "type": "STRING",
+        "default": "false"
+      }
+    }
+  ]
 }

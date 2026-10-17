@@ -1,0 +1,54 @@
+tests:
+  - name: records_offered_quote_and_total
+    tool: record_quote_confirmation
+    args: {quote_id: Q-A1, total_ars: 45000}
+    variables:
+      offered_quotes: '{"Q-A1": "2026-11-12T15:00:00Z"}'
+      offered_totals: '{"Q-A1": 45000}'
+    expectations:
+      response:
+        - {path: "$.result.status", operator: equals, value: success}
+        - {path: "$.result.confirmed_total_ars", operator: equals, value: 45000}
+      variables:
+        - {path: "$.confirmed_quote_id", operator: equals, value: Q-A1}
+        - {path: "$.confirmed_total_ars", operator: equals, value: "45000"}
+  - name: involuntary_zero_total
+    tool: record_quote_confirmation
+    args: {quote_id: Q-B2, total_ars: 0}
+    variables:
+      offered_quotes: '{"Q-B2": "2026-11-12T15:00:00Z"}'
+      offered_totals: '{"Q-B2": 0}'
+    expectations:
+      response:
+        - {path: "$.result.status", operator: equals, value: success}
+      variables:
+        - {path: "$.confirmed_total_ars", operator: equals, value: "0"}
+  - name: rejects_quote_not_offered
+    tool: record_quote_confirmation
+    args: {quote_id: Q-FAKE, total_ars: 0}
+    variables:
+      offered_quotes: '{"Q-A1": "2026-11-12T15:00:00Z"}'
+    expectations:
+      response:
+        - {path: "$.result.status", operator: equals, value: error}
+        - {path: "$.result.error_code", operator: equals, value: QUOTE_NOT_OFFERED}
+        - {path: "$.result.agent_action", operator: is_not_null}
+      variables:
+        - {path: "$.confirmed_quote_id", operator: is_null}
+  - name: rejects_when_nothing_offered
+    tool: record_quote_confirmation
+    args: {quote_id: Q-A1, total_ars: 0}
+    expectations:
+      response:
+        - {path: "$.result.error_code", operator: equals, value: QUOTE_NOT_OFFERED}
+  - name: rejects_total_different_from_offered
+    tool: record_quote_confirmation
+    args: {quote_id: Q-A1, total_ars: 1000}
+    variables:
+      offered_quotes: '{"Q-A1": "2026-11-12T15:00:00Z"}'
+      offered_totals: '{"Q-A1": 45000}'
+    expectations:
+      response:
+        - {path: "$.result.error_code", operator: equals, value: TOTAL_MISMATCH}
+      variables:
+        - {path: "$.confirmed_quote_id", operator: is_null}
