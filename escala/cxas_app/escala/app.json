@@ -1,0 +1,13 @@
+{
+  "name": "escala",
+  "displayName": "escala",
+  "description": "Escala conversational agent (text + voice)",
+  "loggingSettings": {
+    "conversationLoggingSettings": {
+      "retentionWindow": "31536000s"
+    }
+  },
+  "timeZoneSettings": {
+    "timeZone": "America/Los_Angeles"
+  }
+}
