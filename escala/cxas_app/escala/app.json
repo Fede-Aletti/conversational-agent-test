@@ -11,7 +11,7 @@
     "model": "gemini-3-flash"
   },
   "languageSettings": {
-    "defaultLanguageCode": "es-AR"
+    "defaultLanguageCode": "es-419"
   },
   "loggingSettings": {
     "conversationLoggingSettings": {
