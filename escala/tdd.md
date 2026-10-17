@@ -1,12 +1,16 @@
 # Technical Design Document (TDD) - Escala
 
-> Living document. Update the TDD first, then update tests/evals to match.
+> **Status: Approved by the product owner (2026-10-17), rev 3.** Living document. Update the TDD first, then update tests/evals to match.
 > Mode: draft from requirements. Sources: `escala/sources/prd.md` (functional PRD, Spanish, + English "Engineering assumptions" appendix), `escala/sources/project-context.md` (fixed decisions + credit policy), `TESTING.md` (offline harness). **Revision 2:** product-owner-approved architecture direction supersedes the appendix rows "Booking backend", "Policy knowledge", "Operation safety" (in-session Python tools / `_sim_state`).
 > Artifact language: English. Agent-facing instructions and every customer-visible string: Spanish (Argentina), professional tone, voseo, voice-friendly (short turns, no markdown dependence).
 
 ## Guiding principle
 
 **The LLM is the last resort.** Anything code can decide lives in a real backend: identification, impact of a disruption on the whole itinerary, eligible alternatives (deadline + seats for all passengers), per-passenger constraints (check-in), ancillary outcomes, fees/fare differences, voluntary vs involuntary classification, quote expiry, idempotency, simulated failures. The LLM is left with: understanding the request, asking for the minimum missing data, explaining backend results in natural Spanish, getting the passenger's explicit decision, and open-ended FAQ phrasing.
+
+**The backend is a MOCK** (rev 3): no real airline integration exists or is implied. It simulates an airline's systems deterministically, with a broad scenario catalog (named fixtures + a seeded generator, see Synthetic Dataset) so the conversational layer can be exercised against many situations. Randomness never occurs at runtime.
+
+**Product focus: conversational flows.** The "Conversation flows" section is the contract the scaffolder turns into agent instructions.
 
 ## Agent Design
 
@@ -74,8 +78,9 @@ escala/backend/
 |---|---|---|
 | `GET /bookings/lookup?last_name=&pnr=` or `&flight_date=&origin=&destination=` | `lookupBooking` | Normalizes case/spaces/hyphens/diacritics; identifies by PNR+surname, else fallback (surname+date+route). Returns a **trimmed** booking: passengers (`P1`,`P2`, check-in state), segments with status, `connection_status`, per-passenger fare family, ancillaries (type, segments, paid), `disruption` summary (affected segments, `change_type_hint`). Not found -> `BOOKING_NOT_FOUND` (+ `agent_action`: re-check code, offer fallback, then handoff). |
 | `GET /flights/{flight_number}/status?date=` | `getFlightStatus` | Static schedule status + delay minutes; simulated failure mode (see dataset) -> `UPSTREAM_TIMEOUT`, `retryable: true`. |
-| `POST /disruptions/{pnr}/options` body `{deadline?: "today"\|"tomorrow"\|"YYYY-MM-DD", target_date?: "YYYY-MM-DD", destination?: "IATA"}` | `getRebookingOptions` | Orchestrates: load booking -> classify (`involuntary` if a segment is cancelled, delayed >= 120 min [synthetic threshold], or the connection is broken; else `voluntary`) -> compute impact on the whole itinerary -> search flights origin(first impacted segment)->final destination -> filter by deadline and **seats for all passengers** -> apply per-passenger rules (check-in cancellation required, fare family permission) and ancillary outcomes -> price (fee + fare difference) -> rank. Returns `{change_type, resolved_deadline_date, party_size, options:[{option_id, rank, legs[], arrival, arrives_by_deadline, fits_party, seats_available, executable, quote_id, expires_at, per_passenger:[{passenger_id, requires_checkin_cancellation, ancillaries:[{type, outcome, note}]}], fee_total_ars, fare_difference_ars, total_to_pay_ars}], options_after_deadline:[...], blocking_reasons:[...], next_availability}`. **One quote per executable option** (each option carries its own `quote_id`; deviation from a single quote for the whole list because a quote must snapshot a specific itinerary and price). Options that do not fit the whole party are listed with `executable:false`, no `quote_id`. `destination` different from the booking -> `DESTINATION_CHANGE_NOT_SUPPORTED`. Quote persisted with TTL `QUOTE_TTL_MIN = 15`. |
-| `POST /rebookings` body `{quote_id, confirmed, idempotency_key}` | `createRebooking` | Two-phase execution. `confirmed` must be literally `true` else `CONFIRMATION_REQUIRED` (no side effects). Validates quote exists/not expired (`QUOTE_EXPIRED`), **re-checks seats** (`QUOTE_STALE` if changed), then in one Firestore transaction: cancels check-in where required (simulated), re-issues segments, applies ancillary outcomes, writes the rebooking, marks quote `executed`. Verifies by read-after-write and returns `{rebooking_id, confirmation_code, verified:true, new_itinerary, per_passenger:[{..., checkin_cancelled, action_required:"redo_checkin"}], ancillaries:[{passenger_id, type, outcome, note}], pending:[...]}`. Simulated payment: no charge; total echoed. |
+| `POST /disruptions/{pnr}/options` body `{deadline?: "today"\|"tomorrow"\|"YYYY-MM-DD", target_date?: "YYYY-MM-DD", destination?: "IATA"}` | `getRebookingOptions` | Orchestrates: load booking -> classify (`involuntary` if a segment is cancelled, delayed >= 120 min [synthetic threshold], or the connection is broken; else `voluntary`) -> compute impact on the whole itinerary -> search flights origin(first impacted segment)->final destination -> filter by deadline and **seats for all passengers** -> apply per-passenger rules (check-in cancellation required, fare family permission) and ancillary outcomes -> price (fee + fare difference) -> rank. Returns `{change_type, disruption_type, resolved_deadline_date, party_size (seat-holding passengers; infants excluded), options:[{option_id, rank, legs[], arrival, arrives_by_deadline, fits_party, seats_available, executable, not_executable_reason?, quote_id, expires_at, per_passenger:[{passenger_id, requires_checkin_cancellation, ancillaries:[{type, outcome, note}]}], payment:{simulated:true, total_ars, breakdown:{fee_ars, fare_difference_ars, ancillary_reissue_ars}}}], options_after_deadline:[...], blocking_reasons:[...], next_availability}`. **One quote per executable option** (each option carries its own `quote_id`; deviation from a single quote for the whole list because a quote must snapshot a specific itinerary and price). Options that do not fit the whole party are listed with `executable:false`, no `quote_id`. `destination` different from the booking -> `DESTINATION_CHANGE_NOT_SUPPORTED`. Quote persisted with TTL `QUOTE_TTL_MIN = 15`. |
+| `POST /rebookings` body `{quote_id, confirmed, confirmed_total_ars, idempotency_key}` | `createRebooking` | Two-phase execution with simulated payment. `confirmed` must be literally `true` else `CONFIRMATION_REQUIRED` (no side effects). `confirmed_total_ars` must equal the quote's `payment.total_ars` (0 for involuntary) else `TOTAL_MISMATCH`. Voluntary changes are rejected with `VOLUNTARY_CHANGES_DISABLED` when the flag is off. Validates quote exists/not expired (`QUOTE_EXPIRED`), **re-checks seats** (`QUOTE_STALE` if changed), then in one Firestore transaction: cancels check-in where required (simulated), re-issues segments, applies ancillary outcomes, records the simulated payment, writes the rebooking, marks quote `executed`. Verifies by read-after-write and returns `{rebooking_id, confirmation_code, receipt_id, payment:{status:"simulated_paid", total_ars, breakdown}, verified:true, new_itinerary, per_passenger:[{..., checkin_cancelled, action_required:"redo_checkin"}], ancillaries:[{passenger_id, type, outcome, note}], pending:[...]}`. `receipt_id` is deterministic (`RC-` + 6 hex of sha1(quote_id)); no real charge ever occurs. |
+| `GET /scenarios?type=&tag=&limit=` | `listScenarios` (**debug, not exposed to CES**) | Lists the scenario catalog (fixtures + generated): `{scenario_id, type, pnr, surname, tags[], exercises, expected_outcome}`. Enabled only when env flag `ENABLE_SCENARIOS_ENDPOINT=true` (default false; deployed demo/test projects only); otherwise `404`. Excluded from the CES OpenAPI schema; same IAM auth as the rest. |
 | `POST /handoff-cases` body `{reason, summary, pnr?, idempotency_key}` | `createHandoffCase` | Backend assembles context (booking snapshot, quotes offered/executed, rebooking status, reason codes) + LLM `summary`; returns `{case_id}` (deterministic `HC-` + 6 hex of sha1(key)). Idempotent. |
 | `GET /policies/faq?q=` | `searchFaq` | Open-ended FAQ: queries the Vertex AI Search data store (Discovery Engine) over aerolineas.com.ar pages and returns `{answers:[{text, title, source_url}], source:"vertex_ai_search"\|"curated_fallback", as_of, verified}`. Falls back to curated snippets (dataset below) when `FAQ_DATASTORE_ID` is unset, the call fails/times out, or no result. Decision-grade rules (fees, change permissions, transfer rules) are **never** answered from FAQ; they come from `policy-rules` via the other endpoints. |
 
@@ -88,14 +93,16 @@ escala/backend/
 5. `createHandoffCase` also requires `idempotency_key` (`handoff-<PNR|NOPNR>-<n>`).
 
 **Rules module (`policy-rules`), synthetic and data-free of LLM:**
-- Fare families: `ECO_FLEX` voluntary change allowed (fee ARS 25,000/pax + fare difference); `ECO_BASIC` voluntary change **blocked** (`POLICY_FARE_NOT_CHANGEABLE`); both free on involuntary change (same destination, difference 0).
-- Ancillary transfer rules: `extra_bag` involuntary `transfers`, voluntary `transfers_with_fee` (re-issue ARS 10,000 per bag); `seat_selection` always `not_transferred` (reselect at check-in; refund handled by a human).
-- Config flags: `voluntary_changes_enabled` (default **true**, see Open Questions), `QUOTE_TTL_MIN=15`, `DELAY_INVOLUNTARY_MIN=120`, `MIN_CONNECTION_MIN=60`.
-- Fare difference: `max(0, sum(new leg prices) - sum(original leg prices))` per passenger for voluntary; 0 for involuntary.
+- Fare families (Base/Plus/Flex style, names and values **[TBV]**, synthetic): `ECO_BASIC` voluntary change **blocked** (`POLICY_FARE_NOT_CHANGEABLE`); `ECO_PLUS` voluntary allowed (fee ARS 45,000/pax + fare difference); `ECO_FLEX` voluntary allowed (fee ARS 25,000/pax + fare difference); all free on involuntary change (same destination, difference 0).
+- Ancillary transfer rules (involuntary / voluntary): `extra_bag` `transfers` / `transfers_with_fee` (ARS 10,000 per bag); `seat_selection` `not_transferred` / `not_transferred` (reselect at check-in; refund by a human); `priority_boarding` `transfers` / `not_transferred`; `sport_equipment` `transfers` / `transfers_with_fee` (ARS 15,000); `pet_in_cabin` `needs_review` / `needs_review` (carrier re-approval needed -> option `executable:false`, `not_executable_reason: ANCILLARY_NEEDS_REVIEW` -> handoff). Infants carry no ancillaries.
+- Passenger types: `adult`, `minor` (2-11, **[TBV]**), `infant` (<2, lap, no seat). Seat counts use adults + minors only. Unaccompanied minors are out of scope (handoff).
+- Disruption classification: `involuntary` if cancellation, delay >= `DELAY_INVOLUNTARY_MIN` (120), schedule change >= `SCHEDULE_CHANGE_INVOLUNTARY_MIN` (90), missed/broken connection, or equipment downgrade (seat assignments lost; a `keep_current` option is returned alongside alternatives); delay below threshold on all segments with intact connections is informational (`change_type: voluntary`, no rebooking needed).
+- Config flags: **`voluntary_changes_enabled` = true by default** (decision closed, rev 3), `ENABLE_SCENARIOS_ENDPOINT` (default false), `QUOTE_TTL_MIN=15`, `DELAY_INVOLUNTARY_MIN=120`, `SCHEDULE_CHANGE_INVOLUNTARY_MIN=90`, `MIN_CONNECTION_MIN=60`.
+- Fare difference: `max(0, sum(new leg prices) - sum(original leg prices))` per seat-holding passenger for voluntary; 0 for involuntary. Voluntary quote total = fee + fare difference + ancillary re-issue; shown to the passenger and **confirmed explicitly by amount** before execution.
 
 **Infra prerequisites - deploy-time checks, not assumptions** (each is verified by a command/console check before first deploy; record result in Known Issues/Changelog):
 1. Firebase added to GCP project `gen-lang-client-0907599903` (`firebase projects:list`; add Firebase if absent).
-2. **Blaze (pay-as-you-go) plan** enabled - required to deploy 2nd gen functions (billing owner must approve; see Open Questions).
+2. **Blaze (pay-as-you-go) plan:** required for 2nd gen functions. GCP billing is already enabled on the project (product owner, rev 3); still verify the Firebase plan shows Blaze at deploy.
 3. APIs enabled: Cloud Functions, Cloud Run, Cloud Build, Artifact Registry, Firestore, Eventarc (if requested by the deploy), Secret Manager (if API-key auth fallback is used), Discovery Engine (Vertex AI Search) (`gcloud services list --enabled`).
 4. Firestore database created in Native mode; location is **immutable** once created -> choose deliberately (`us-central1` regional vs `nam5` multi-region) and confirm it is allowed/available for the project.
 5. Functions region `us-central1` (or closest available to the CES `us` location); Node 20+ runtime available; `firebase-tools` version compatible; Java present for the emulator.
@@ -106,7 +113,7 @@ escala/backend/
 ### CES integration
 
 - **Toolset:** `toolsets/escala_api/escala_api.json` (`openApiToolset.openApiSchema` -> `toolsets/escala_api/open_api_toolset/open_api_schema.yaml`, `apiAuthentication.serviceAgentIdTokenAuthConfig: {}`; fallback `apiKeyConfig`). Schema is generated from/validated against `functions/src/http/openapi.yaml`; every operation has an explicit unique `operationId` and a semantically rich `description` (guide: "descriptions are instructions"). Assigned per agent via the agent JSON `toolsets` array with `toolIds` restricting each agent to its operations. Resulting tool names follow `{toolset}_{operationId}` (verify exact names with `retrieveTools` at build, since callbacks key on them).
-- **No Python wrapper tools for trimming/chaining:** the backend returns minimal, functional responses (guide: "Prefer toolset wrappers for latency/data reduction" applies to raw third-party APIs; here we own the API). The only Python tools are state-only: `record_quote_confirmation(quote_id)` and `set_session_outcome(outcome)`.
+- **No Python wrapper tools for trimming/chaining:** the backend returns minimal, functional responses (guide: "Prefer toolset wrappers for latency/data reduction" applies to raw third-party APIs; here we own the API). The only Python tools are state-only: `record_quote_confirmation(quote_id, total_ars)` and `set_session_outcome(outcome)`.
 - **Removed:** the in-session `_sim_state` JSON ledger and all in-session data/rules tools from revision 1.
 
 ### Routing Logic
@@ -125,7 +132,7 @@ PRD defines no routing rules explicitly; proposal from PRD 4 and 7:
 | `channel` | string `text`/`voice` | Session parameter (optional) | Tone only. |
 | `active_pnr` | string | Set by `after_tool` callback on `lookupBooking` success | Context continuity across transfers/interruptions. Tests may seed it. |
 | `offered_quotes` | JSON `{quote_id: expires_at}` | Set by `after_tool` callback on `getRebookingOptions` (replaces previous) | **NEVER override in evals.** |
-| `confirmed_quote_id` | string | Set by Python tool `record_quote_confirmation` after the passenger's explicit yes; cleared by `after_tool` on `getRebookingOptions` and on `createRebooking` | **NEVER override in evals.** |
+| `confirmed_quote_id` | string | Set by Python tool `record_quote_confirmation(quote_id, total_ars)` after the passenger's explicit yes to the quote **and its total amount** (also stores `confirmed_total_ars`); cleared by `after_tool` on `getRebookingOptions` and on `createRebooking` | **NEVER override in evals.** |
 | `session_outcome` | `resolved`/`handed_off`/`failed` | `after_tool` on `createHandoffCase` -> `handed_off`; `set_session_outcome` for `resolved`/`failed` | Analytics (appendix "Metrics"). |
 | `_disclaimer_shown` | bool | `after_model` callback | **NEVER override in evals.** |
 
@@ -135,7 +142,7 @@ Removed: `sim_today` (backend resolves dates), `_sim_state` (backend ledger).
 
 | Callback | Agent(s) | Purpose / justification |
 |---|---|---|
-| `before_tool` `guard_mutating_calls` | `disruption_rebooking_agent` | **Defense in depth** (backend remains authoritative). For `escala_api_createRebooking`: short-circuit with `{"status":"error","error_code":"CONFIRMATION_REQUIRED","agent_action":"..."}` unless `confirmed_quote_id == input.quote_id` and `quote_id in offered_quotes` and `input.confirmed is True`. Prevents the model from executing before the passenger confirmed the *current* quote. Limitation: `record_quote_confirmation` is itself LLM-called, so this narrows but does not eliminate the model-skips-consent risk; the backend rejects `confirmed:false`/expired/stale/unknown quotes regardless. |
+| `before_tool` `guard_mutating_calls` | `disruption_rebooking_agent` | **Defense in depth** (backend remains authoritative). For `escala_api_createRebooking`: short-circuit with `{"status":"error","error_code":"CONFIRMATION_REQUIRED","agent_action":"..."}` unless `confirmed_quote_id == input.quote_id`, `quote_id in offered_quotes`, `input.confirmed is True` and `input.confirmed_total_ars == confirmed_total_ars == offered total`. Prevents the model from executing before the passenger confirmed the *current* quote. Limitation: `record_quote_confirmation` is itself LLM-called, so this narrows but does not eliminate the model-skips-consent risk; the backend rejects `confirmed:false`/expired/stale/unknown quotes regardless. |
 | `after_tool` `track_state` | `root_agent`, `disruption_rebooking_agent`, `handoff_agent` | On `lookupBooking` ok -> `active_pnr`; on `getRebookingOptions` ok -> `offered_quotes` (reset `confirmed_quote_id`); on `createRebooking` ok -> clear `confirmed_quote_id`; on `createHandoffCase` ok -> `session_outcome="handed_off"`. State bookkeeping that code can do. |
 | `after_model` `inject_disclaimer` | all three | Prepend the fixed Spanish experimental disclaimer once (flag `_disclaimer_shown`), only when the response has text. Appendix "Experimental disclaimer". |
 
@@ -145,10 +152,70 @@ No `before_agent` (clock moved to backend). No `before_model` trigger pattern. C
 
 - Persona: asistente experimental, voseo, cordial, concreto, turnos cortos; dates/amounts in natural spoken form; one question at a time; PNR read back letter by letter; never read internal ids except `confirmation_code` and `case_id`.
 - Ask only for what identifies the booking. Present backend options ranked as returned, with differences and limits (e.g. "la opción C sólo tiene un asiento, no entran los dos").
-- Before `createRebooking`: read back, per passenger, new flights, what happens to check-in, which extras transfer / transfer with fee / do not, and total to pay (simulated); obtain explicit "sí"; call `record_quote_confirmation(quote_id)`; then `createRebooking` with `confirmed=true` and `idempotency_key="rebook-<quote_id>"`. A second "sí" for an executed quote is answered from `already_applied`.
+- Before `createRebooking`: read back, per passenger, new flights, what happens to check-in, which extras transfer / transfer with fee / do not, and the total to pay (fee + fare difference + re-issue; "simulated", no real charge); obtain an explicit "sí" that restates the total when it is above 0; call `record_quote_confirmation(quote_id, total_ars)`; then `createRebooking` with `confirmed=true`, `confirmed_total_ars` and `idempotency_key="rebook-<quote_id>"`. Report the `receipt_id`. A second "sí" for an executed quote is answered from `already_applied`.
 - After execution: new itinerary, ancillary outcomes per passenger, what is still pending (e.g. redo check-in, reselect seat). Never claim anything the response does not state.
 - Distinguish confirmed vs pending vs unknown; FAQ answers carry the source and the "needs verification" caveat when `verified:false`.
 - Close: `set_session_outcome` (or handoff path), farewell, `end_session`.
+
+---
+
+## Conversation flows
+
+Contract for the scaffolder. Notation: **U** passenger, **A** agent (Spanish AR voseo, short turns; English here is a gist), `op()` = backend call. Fixture PNRs from the Scenario catalog. Flows reference **cross-cutting rules** first.
+
+**Cross-cutting rules (apply to every flow)**
+- R1 One question per turn; ask only for what is missing. Never re-ask `active_pnr`, surname or facts already given.
+- R2 Never state flight status, availability, price, fee or rule that is not in a backend response. FAQ answers carry source; if `verified:false` add "a confirmar en aerolineas.com.ar".
+- R3 Read-back before any execution: per passenger new flights, check-in effect, ancillary outcomes, total amount (simulated, no real charge). Offer only `executable:true` options.
+- R4 Corrections: if U corrects PNR/surname/date/deadline/option, re-run the relevant `op()` (new lookup or new `getRebookingOptions`), which invalidates earlier quotes (callback resets `offered_quotes`, `confirmed_quote_id`); say so briefly.
+- R5 Interruptions (FAQ, baggage, "what happens to my seat?"): answer inline from `lookupBooking` ancillaries or `searchFaq`, then resume: "Volviendo a tu cambio: ¿te quedás con la opción B?".
+- R6 Intent switch: acknowledge, keep context, route by new intent (change -> options again; destination change -> explain + handoff; "never mind" -> close politely, `set_session_outcome`).
+- R7 Double confirmation: second "sí"/"confirmá" after execution -> call `createRebooking` again with the same key only if unsure of state; answer from `already_applied:true` ("Ya lo hicimos, tu código sigue siendo X"), never imply a second change.
+- R8 Refusal: U declines all options -> no execution; offer later options (`options_after_deadline`), then handoff; U declines the read-back -> back to option choice, nothing executed.
+- R9 Handoff on explicit request is immediate (no persuasion); on failure paths first explain exactly what is pending and why, then offer it. Call sequence: transfer to `handoff_agent` -> `createHandoffCase(reason, summary, pnr?, idempotency_key="handoff-<PNR|NOPNR>-<n>")` -> tell U the `case_id` and that they will not need to repeat themselves -> farewell -> `end_session`.
+- R10 Outage: `retryable:true` error -> one retry of the same op; second failure -> plain disclosure, no guessing, offer handoff.
+- R11 Disclaimer once on the first agent text (callback).
+
+**F-01 Main demo (CUJ-01/05/06/07)** - `RMR4TX`
+1. U: opening utterance (PRD 5). A (root): disclaimer + asks PNR and surname. 2. U gives "R M R 4 T X, Romero". A reads PNR back letter by letter only if voice. `lookupBooking(last_name, pnr)` -> sets `active_pnr` -> transfer to `disruption_rebooking_agent` (no re-ask).
+3. A confirms understanding in one sentence: AR1561 cancelled, connection lost, 2 pax, P2 checked in, extra bags. `getRebookingOptions(pnr, deadline:"tomorrow")` -> options A (direct 11:40), B (via AEP 12:05), C not executable (1 seat).
+4. A presents A and B with differences (direct vs connection, arrival time) and says C does not fit both. 5. U picks A (or asks "¿y si viajo yo sola hoy?" -> R8/partial-party: not supported -> explain, offer handoff or A/B).
+6. A read-back (R3): P1 unchanged check-in, bag transfers; P2 check-in will be cancelled and must be redone, bag transfers, seats 12A/12C are not kept, total $0. Asks "¿Confirmo el cambio para los dos?".
+7. U "sí" -> `record_quote_confirmation(quote_id, 0)` -> `createRebooking(quote_id, confirmed:true, confirmed_total_ars:0, idempotency_key:"rebook-<quote_id>")` -> result `verified:true`.
+8. A reports new itinerary, `confirmation_code`, `receipt_id`, ancillary outcomes per passenger, pending (P2 redo check-in, reselect seat). 9. Anything else? -> `set_session_outcome(resolved)` -> farewell -> `end_session`.
+- Branches: interruption on baggage at step 4/6 (R5, `searchFaq("equipaje adicional")` or ancillaries); correction of deadline ("mejor pasado mañana") -> new `getRebookingOptions(deadline:"YYYY-MM-DD")` (R4); `QUOTE_EXPIRED`/`QUOTE_STALE` at step 7 -> re-run options, re-read-back, re-confirm; `CONFIRMATION_REQUIRED` (callback block) -> do the read-back/confirmation properly; double "sí" (R7).
+
+**F-02 Duplicate confirmation (CUJ-02/03)** - `DP4N8S`: lookup -> options (one option AR1702, total 0) -> read-back -> "sí" -> record -> `createRebooking` -> result. U: "sí, confirmá" again -> `createRebooking` same key -> `already_applied:true` -> A repeats the same `confirmation_code`, no new change. Variant: U changes mind after execution ("mejor el vuelo de las 22") -> R6: new `getRebookingOptions` is a *new* change request on the already rebooked booking; if no further options, explain and offer handoff.
+
+**F-03 Booking not found / fallback (CUJ-04)** - `QWE4RT`, `LQ3W9D`
+1. U gives code `QWE4RT`+surname -> `lookupBooking` -> `BOOKING_NOT_FOUND`. A: "No lo encuentro; ¿revisás el código? " (one retry). 2. U cannot find it -> A asks surname + flight date + route (one question at a time) -> `lookupBooking(last_name, flight_date, origin, destination)` -> found -> continue (R1: no re-asking). 3. If still not found -> explain, offer handoff with whatever U provided (`pnr` omitted). Branch: U gives a typo'd code `LQ3W9B` (same flow); U refuses to give more -> handoff (R9).
+
+**F-04 Voluntary change with simulated payment (CUJ-12)** - `NV8C5R`
+1. U: "quiero pasar mi vuelo del 14 al 15". `lookupBooking` (if not identified) -> `getRebookingOptions(pnr, target_date:"2026-11-15")` -> `change_type: voluntary`, option AR1852, `payment.total_ars = 45000` (fee 25,000 + difference 10,000 + bag re-issue 10,000).
+2. A: explains it is a voluntary change with cost, breaks down the three amounts (simulated), what transfers (bag with fee), seat none. Asks "¿Confirmás el cambio por $45.000?".
+3. U "sí" -> `record_quote_confirmation(quote_id, 45000)` -> `createRebooking(..., confirmed_total_ars:45000)` -> result with `receipt_id`, `payment.status:"simulated_paid"`.
+- Branches: U refuses the price (R8) -> offer other date (`getRebookingOptions` again) or end; U answers "sí" without restating the amount -> agent restates total and asks again (callback blocks otherwise); `TOTAL_MISMATCH` -> re-read quote; flag off -> `VOLUNTARY_CHANGES_DISABLED` -> explain and offer handoff; ECO_BASIC booking -> F-08.
+
+**F-05 Destination change mid-conversation (CUJ-11)** - `NV8C5R`: F-04 step 1 then U: "mejor cambiame el destino a Ushuaia" -> `getRebookingOptions(pnr, destination:"USH")` -> `DESTINATION_CHANGE_NOT_SUPPORTED`. A keeps context (same booking, same passenger), explains it cannot change destination here, offers: keep the date change (back to F-04) or handoff. U picks handoff -> R9. U goes back to date change -> F-04 step 2 (new quote; previous invalid).
+
+**F-06 No alternatives (CUJ-08)** - `TB6H1Y`: lookup -> `getRebookingOptions(deadline:"tomorrow")` -> `options:[]`, `options_after_deadline:[AR1306 11-15]`. A: no flights arrive by tomorrow; the next available is 11-15 (be explicit it misses the deadline); asks if U wants it. U yes -> standard read-back/confirm/execute with its quote. U no -> R8 -> handoff. Never invents options or promises standby.
+
+**F-07 Failure modes (CUJ-09/24)** - `SV2T7K` (timeout), `UE4Q8H` (5xx-like `UPSTREAM_ERROR`), `SL6Y3M` (slow)
+- Timeout / 5xx-like: `getFlightStatus` or `getRebookingOptions` -> `retryable:true` error -> filler ("Estoy consultando, un momento") -> one retry (R10) -> second failure: A says the system is not responding, no guess, offers handoff or retry later -> handoff with reason `upstream_failure`, `summary` states what was being attempted.
+- Slow (responds after ~8 s): A uses a short filler before the call and presents the result normally; no retry while the call is pending.
+- U asks status while the outage lasts: `lookupBooking` and `searchFaq` still work; A answers what it can and labels the rest "pendiente de consulta".
+
+**F-08 Policy blocks the change (CUJ-10)** - `PB9K4Z`: lookup -> `getRebookingOptions(target_date)` -> `blocking_reasons:[POLICY_FARE_NOT_CHANGEABLE]`, no quote. A explains the fare does not allow voluntary changes, cites `searchFaq("cambios tarifa")` with source/caveat, offers handoff. U insists on executing -> A does not try `createRebooking`; U asks for a human -> R9.
+
+**F-09 Human handoff (CUJ-13)**: (a) before identification: "quiero hablar con una persona" -> root transfers -> `createHandoffCase(reason:"user_request", pnr omitted)`; (b) mid-flow after options shown (`RMR4TX`): immediate handoff, summary lists identified booking, options offered, quotes not executed; (c) after a failure path (F-05/06/07/08): A states what is pending, then handoff. In all: tells `case_id` and "no vas a tener que repetir nada"; `session_outcome` = `handed_off`. Repeated request -> idempotent same `case_id`.
+
+**F-10 FAQ and interruptions (CUJ-14/15)**: root answers open questions via `searchFaq(q)`: 1-3 spoken sentences + source name; unverified -> caveat; no result -> "no tengo información confiable" + offer handoff, no invention. Mid-flow baggage question: R5. Question about the booking's own extras ("¿mi equipaje se mantiene?") -> from `lookupBooking` ancillaries + `getRebookingOptions` outcomes, not from FAQ.
+
+**F-11 Flight status / delay inquiry (generated matrix)**: U: "mi vuelo está demorado" -> `lookupBooking` -> `getFlightStatus(flight, date)` -> if delay below threshold and connection intact: inform, no change needed, offer to explore options anyway (voluntary, F-04 path); if above threshold, schedule change, broken connection or equipment downgrade: `getRebookingOptions` (involuntary, F-01 path). Equipment downgrade: tell U seat assignments are lost; offer `keep_current` or alternatives.
+
+**F-12 Special passengers and ancillaries (CUJ-22)**: infant on lap -> not counted for seats, no ancillaries, A mentions the infant stays with the adult on the new flight; minor -> counted for seats; `pet_in_cabin` or other `needs_review` -> option `executable:false` with `ANCILLARY_NEEDS_REVIEW`: A explains why and offers handoff; `sport_equipment` voluntary -> re-issue fee in total; `priority_boarding` voluntary -> "no se transfiere"; international regional (`XN7B2K`): A adds the travel-documents note from `searchFaq("requisitos de viaje")`.
+
+**F-13 Closing and outcome**: after resolution: summary in two sentences (what changed, what is pending), `set_session_outcome(resolved)`, farewell, `end_session`. U leaves midway -> `set_session_outcome(failed)` only if nothing was resolved and no handoff.
 
 ---
 
@@ -190,7 +257,7 @@ Minimum connection time 60 min (same-day: 12:55 -> 15:40 ok; next morning: 08:25
 
 Per-passenger for A/B: P1 no check-in cancellation, bag `transfers`; P2 `requires_checkin_cancellation: true`, bag `transfers`, seats `not_transferred`, `action_required: redo_checkin`.
 
-### Bookings (seeds)
+### Bookings (core named fixtures, detail; full catalog and generator below)
 
 | PNR | Surname | Pax (check-in) | Itinerary | Fare | Ancillaries | Scenario |
 |---|---|---|---|---|---|---|
@@ -204,6 +271,53 @@ Per-passenger for A/B: P1 no check-in cancellation, bag `transfers`; P2 `require
 | **PB9K4Z** | Giménez | P1 Sofía Giménez | AR1860 AEP->IGR, 2026-11-16 (on time) | **ECO_BASIC** | none | **Policy blocks change** (PRD 7): voluntary request -> `blocking_reasons:[POLICY_FARE_NOT_CHANGEABLE]`, no quote; agent explains with FAQ citation and offers handoff. |
 
 **Human handoff (PRD 7):** may occur anywhere; primary tests: `RMR4TX` after options were shown, and with no PNR identified (`pnr` omitted). **Interruption (PRD 7):** during `RMR4TX` options the passenger asks about extra baggage; the agent answers from ancillaries/`searchFaq` and resumes without re-identification.
+
+### Scenario catalog (mock backend: named fixtures + deterministic generator)
+
+**Named fixtures** are hand-written, keep stable PNRs, and are referenced by tests and Conversation flows. New fixtures need support flights in the `AR9xxx` range defined in `dataset.ts` (same fields as the flights table). PNR alphabet excludes `0/O/1/I`.
+
+| Scenario id | PNR | What it exercises |
+|---|---|---|
+| FX-DEMO | RMR4TX | Main demo: cancel + broken connection, 2 pax, one checked in, bags + seats; option ranking, split-party option C not executable (F-01) |
+| FX-NOTFOUND | QWE4RT | `BOOKING_NOT_FOUND` (F-03) |
+| FX-FALLBACK | LQ3W9D | Lookup by surname + date + route after wrong PNR (F-03) |
+| FX-VOLUNTARY | NV8C5R | Voluntary change, ECO_FLEX, fee + difference + bag re-issue = 45,000, simulated payment; destination change -> unsupported (F-04, F-05) |
+| FX-NOALT | TB6H1Y | Cancelled, no alternatives by deadline, only later flight (F-06) |
+| FX-TIMEOUT | SV2T7K | Backend `UPSTREAM_TIMEOUT` on status/options (F-07) |
+| FX-DUP | DP4N8S | Single easy option; duplicate confirmation / idempotency (F-02) |
+| FX-POLICYBLOCK | PB9K4Z | ECO_BASIC voluntary change blocked (F-08) |
+| FX-INFANT | KT5M2V | 1 adult + 1 infant, cancellation; infant excluded from seats and ancillaries (F-12) |
+| FX-MINOR | HN7D4C | 2 adults + 1 minor, partial seats (2 of 3 seats on the best option); party-fit logic (F-12) |
+| FX-PARTIAL | PS8N4W | 3 adults, one option with 2 seats, one with 3 later; partial seats ranking |
+| FX-PET | PW6J8X | `pet_in_cabin` -> `ANCILLARY_NEEDS_REVIEW`, option not executable -> handoff (F-12) |
+| FX-SPORT | SQ9R3F | `sport_equipment` + `priority_boarding`, voluntary change with re-issue fee and non-transfer (F-12) |
+| FX-PLUS | PL3T5R | ECO_PLUS voluntary change, fee 45,000/pax |
+| FX-DELAY-BELOW | DL4B6N | 90 min delay, connection intact: informational, no involuntary change (F-11) |
+| FX-DELAY-ABOVE | DL8H2P | 180 min delay: involuntary (F-11) |
+| FX-SCHEDCHANGE | SC3K7T | 120 min schedule change: involuntary (F-11) |
+| FX-MISSEDCONN | MC5W9G | Seg 1 delayed 100 min (below threshold) breaks the 60 min minimum connection: involuntary by connection rule |
+| FX-DOWNGRADE | ED2V6Z | Equipment downgrade: seat assignments lost, `keep_current` + alternatives (F-11) |
+| FX-INTL | XN7B2K | Regional international AEP->MVD cancelled; travel-documents FAQ note (F-12) |
+| FX-5XX | UE4Q8H | Backend `UPSTREAM_ERROR` (5xx-like, 200 envelope, `retryable:true`) (F-07) |
+| FX-SLOW | SL6Y3M | Backend latency ~8 s then success (F-07) |
+
+**Deterministic generator** (`seed/generate.ts`): `generateScenarios(SEED=20261112)` uses a seeded PRNG (mulberry32) and pure functions; the output is a function of the seed only, with no clock or `Math.random` calls, and is written to Firestore by `seed.ts` (runtime handlers only read data). Scenario ids `GEN-0001...`; PNRs derived from the id with a fixed hash into the safe alphabet and checked for collisions with fixtures. A covering design (not the full cross product) builds ~120 bookings so that every pair of the following dimensions co-occurs at least once, plus the full product of the two most behavior-relevant ones:
+
+| Dimension | Values |
+|---|---|
+| Passengers (1-4) | 1 adult; 2 adults; 2 adults + minor; 3 adults; 2 adults + infant; 4 mixed (adults, minor, infant) |
+| Check-in per passenger | none / some / all checked in (per pax flag) |
+| Ancillaries | none; `extra_bag`; `seat_selection`; `priority_boarding`; `pet_in_cabin`; `sport_equipment`; combinations (per-pax) with transfer rules above |
+| Fare family | `ECO_BASIC`, `ECO_PLUS`, `ECO_FLEX` (names **[TBV]**) |
+| Route class | domestic (AEP/COR/BRC/IGR/MDZ/USH pairs); regional international (AEP-MVD, AEP-SCL, AEP-GRU, AEP-ASU) |
+| Itinerary shape | direct; one connection |
+| Disruption type | cancel; delay below threshold; delay at/above threshold; schedule change; missed connection; equipment downgrade; none (voluntary) |
+| Alternatives availability | none; partial seats (< party); plenty; only after deadline |
+| Failure mode | none; timeout; 5xx-like; slow (assigned to a small fixed subset, e.g. 1 in 20) |
+
+The full product of **disruption type x alternatives availability** (7 x 4 = 28 combinations) is generated for each of {1 pax, 3 pax} so those two dimensions are exhaustively covered; the other dimensions are assigned by the covering design with the PRNG choosing only among allowed values. Generated flights live in `AR8xxx`/`AR9xxx` ranges, with seat counts set by the availability dimension. Each generated booking carries `tags[]` and an `expected_outcome` (class of result computed by an independent oracle in the test suite, not by the production code under test) so `GET /scenarios` and property tests can assert it. Determinism check: two generator runs produce an identical dataset hash (test CUJ-21).
+
+**`GET /scenarios`** (flag-gated debug endpoint, see API table) returns this catalog (fixtures first, then generated, filterable by `type`, `tag`) so demo operators and testers can pick a PNR for a situation without reading the code.
 
 ### Curated policy snippets (fallback for `/policies/faq`; Aerolíneas Argentinas public information - placeholder, needs human verification)
 
@@ -252,6 +366,11 @@ Every snippet: placeholder `source_url` under `https://www.aerolineas.com.ar/`, 
 | CUJ-17 | Spanish (AR, voseo), voice-friendly, concise (appendix) | Sim (voice deferred; +4-6 max_turns when run) | none | Style is LLM-judged | P1 | MEDIUM | `style, voice` |
 | CUJ-18 | Session outcome set (appendix "Metrics") | Golden | tool-test YAML for `set_session_outcome`; **C** for handoff path | Deterministic | P2 | LOW | `metrics` |
 | CUJ-19 | API/tool contract integrity | - | K: OpenAPI contract test; `retrieveTools` check of operationIds vs callback names (manual, once); seed integrity test (every seed PNR resolves, seats non-negative) | Prevents schema/callback drift | P1 | HIGH | `contract` |
+| CUJ-21 | Generated scenario matrix: invariants over ~120 generated bookings | - | V/E property tests: generator determinism (identical dataset hash across runs), seats never negative, every `executable` option has `fits_party` and enough seats for seat-holding pax (infants excluded), classification equals the independent oracle's `expected_outcome`, rebooking then replay is idempotent | Mock breadth with cheap regression | P1 | HIGH | `generator, matrix` |
+| CUJ-22 | Special passengers and ancillary matrix (infant, minor, pet, sport equipment, priority) (F-12) | Sim | V/E: `KT5M2V`, `HN7D4C`, `PS8N4W`, `PW6J8X`, `SQ9R3F`, `XN7B2K` expectations | Rules in code | P1 | MEDIUM | `pax-types, ancillaries` |
+| CUJ-23 | `GET /scenarios` flag-gated catalog | - | E: 404 when `ENABLE_SCENARIOS_ENDPOINT` off; when on lists every fixture + generated with required fields; not present in CES schema (K) | Debug tooling safety | P2 | LOW | `debug` |
+| CUJ-24 | Failure modes: timeout, 5xx-like, slow (F-07) | Sim | V/E: `SV2T7K`, `UE4Q8H`, `SL6Y3M` envelopes and latency | Seeded failures | P1 | HIGH | `resilience` |
+| CUJ-25 | Voluntary payment step: total confirmed by amount, simulated receipt (F-04) | Golden | V/E: `TOTAL_MISMATCH`, `VOLUNTARY_CHANGES_DISABLED` with flag off, `receipt_id` deterministic and replay-stable; **C**: callback blocks when amount differs from offered total | Deterministic | P0 | HIGH | `voluntary, payment` |
 | CUJ-20 | Simulated "today"/deadline resolution (PRD 9) | - | V: `"tomorrow"` -> 2026-11-13, `"today"`, ISO passthrough, past date rejected | Deterministic | P2 | LOW | `determinism` |
 
 ### Test Data
@@ -275,7 +394,7 @@ Opening utterance for CUJ-01 (PRD 5, verbatim): "Hola, viajamos dos de Córdoba 
 ## Build Steps (order)
 
 1. **Backend domain + tests first:** scaffold `escala/backend/`; implement bounded contexts, `policy-rules`, `rebooking` use cases against in-memory adapters; vitest suites for CUJ-02/03/05-08/10/12/13/15/20 (TDD).
-2. **Firestore adapters + emulator:** implement adapters, `firebase.json` emulator config, `seed.ts` + `dataset.ts`; emulator integration tests (E) incl. transactions and concurrency.
+2. **Firestore adapters + emulator:** implement adapters, `firebase.json` emulator config, `seed.ts` + `dataset.ts` (named fixtures) + `generate.ts` (seeded generator) + flag-gated `GET /scenarios`; emulator integration tests (E) incl. transactions and concurrency.
 3. **Deploy-time infra checks** (Infra prerequisites list above) - record results; stop if any fails.
 4. **Deploy functions + seed** to `gen-lang-client-0907599903`; smoke-test endpoints with the seeded PNRs; configure invoker IAM for CES.
 5. **Vertex AI Search data store** (can run in parallel, non-blocking): create over aerolineas.com.ar pages; set `FAQ_DATASTORE_ID`; redeploy. Until ready, FAQ uses curated fallback.
@@ -315,5 +434,6 @@ Opening utterance for CUJ-01 (PRD 5, verbatim): "Hola, viajamos dos de Córdoba 
 |------|--------|--------|
 | 2026-10-17 | Initial requirements-derived TDD draft (sources: prd.md, project-context.md) | tdd-writer |
 | 2026-10-17 | Rev 2: Firebase backend (Functions + Firestore) owns all deterministic decisions; OpenAPI toolset; journey-based agents (root / disruption_rebooking / handoff); two-phase quotes with idempotency ledger; before/after_tool callbacks; Vertex AI Search FAQ with curated fallback; removed `_sim_state`/`sim_today`; offline substitutes now vitest/emulator/contract/callback tests; build order updated | tdd-writer |
+| 2026-10-17 | Rev 3 (APPROVED by product owner): backend declared MOCK; scenario catalog (22 named fixtures) + seeded generator (~120 bookings) + flag-gated `GET /scenarios`; "Conversation flows" section (F-01..F-13 with backend call sequences); voluntary changes ENABLED by default with simulated payment (confirm total, `receipt_id`); Blaze/billing resolved; coverage CUJ-21..25 | tdd-writer |
 
 Review and approve before scaffolding the agent.
