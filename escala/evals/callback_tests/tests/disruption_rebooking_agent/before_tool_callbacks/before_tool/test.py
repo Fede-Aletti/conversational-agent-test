@@ -97,3 +97,19 @@ def test_accepts_dict_state_values():
         offered_quotes={QUOTE: "t"}, offered_totals={QUOTE: 45000}
     )
     assert run(state, args()) is None
+
+
+def test_passes_when_model_sends_total_as_float():
+    # Regression (simulator-f9efbac9): the model sent confirmed_total_ars=0.0 and every
+    # createRebooking was blocked because int("0.0") raised.
+    state = make_state(offered_totals=json.dumps({QUOTE: 0.0}), confirmed_total_ars="0")
+    assert run(state, args(confirmed_total_ars=0.0)) is None
+
+
+def test_passes_when_totals_are_float_strings():
+    state = make_state(offered_totals=json.dumps({QUOTE: "45000.0"}), confirmed_total_ars="45000.0")
+    assert run(state, args(confirmed_total_ars=45000.0)) is None
+
+
+def test_blocks_fractional_total():
+    assert_blocked(run(make_state(), args(confirmed_total_ars=45000.5)))

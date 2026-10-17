@@ -30,12 +30,14 @@ def _as_dict(raw) -> dict:
 
 
 def _to_int(value) -> Optional[int]:
-    if isinstance(value, bool):
+    # Models send JSON numbers as floats (0.0, 45000.0); accept integral values only.
+    if isinstance(value, bool) or value is None:
         return None
     try:
-        return int(str(value).strip())
+        number = float(str(value).strip())
     except (TypeError, ValueError):
         return None
+    return int(number) if number.is_integer() else None
 
 
 def _blocked(reason: str) -> dict:
@@ -44,9 +46,9 @@ def _blocked(reason: str) -> dict:
         "error_code": "CONFIRMATION_REQUIRED",
         "retryable": False,
         "agent_action": (
-            "No se ejecutó nada. " + reason + " Leele al pasajero el detalle del cambio "
-            "(vuelos nuevos, check-in, extras y total), pedí un sí explícito repitiendo el total, "
-            "registralo con record_quote_confirmation y recién entonces ejecutá el cambio."
+            "No se ejecutó nada. " + reason + " Si el pasajero todavía no confirmó, resumí el cambio "
+            "y pedí su sí. Si ya confirmó, registralo con record_quote_confirmation y reintentá una "
+            "sola vez, sin pedirle que repita nada."
         ),
     }
 

@@ -32,13 +32,13 @@ STEP_TEXTS = {
         "2. Cambio voluntario: explicá que tiene costo; abrí cargo, diferencia de tarifa y reemisión de extras, y el total, aclarando que es simulado y no se cobra nada real.\n"
         "3. Solo una parte del grupo: no se puede acá; ofrecé opciones para todos o derivar (reason partial_party).\n"
         "4. Esperá que elija una ejecutable; si duda, resumí la diferencia principal. Si rechaza todas, no se ejecuta nada: ofrecé las posteriores (options_after_deadline) si las hay y, si tampoco las quiere, ofrecé derivar (reason no_alternatives).\n"
-        "5. Cuando elige, leé el detalle pasajero por pasajero con su nombre: vuelos nuevos, check-in (si requires_checkin_cancellation es true se cancela y tiene que volver a hacerlo), cada extra según el sistema (se transfiere, con cargo, no se transfiere o requiere revisión) y el total (simulado). Terminá con \"¿Confirmo el cambio para todos?\"; si el total es mayor que cero, \"¿Confirmás el cambio por\" y el importe. Si no acepta, volvé a elegir sin ejecutar nada.\n"
-        "6. Con un sí explícito a este detalle (si el total es mayor que cero, el sí tiene que incluir el importe; si dijo solo \"sí\", repetí el total y pedí de nuevo) usá record_quote_confirmation con el quote_id elegido y el total en pesos confirmado. Con QUOTE_NOT_OFFERED o TOTAL_MISMATCH, pedí las opciones de nuevo o releé el total exacto."
+        "5. Cuando elige, hacé un resumen corto (máximo 3 frases, sin listas): el vuelo nuevo; solo lo que cambia para cada pasajero (por ejemplo, a quién se le cancela el check-in y debe rehacerlo, qué extra no se transfiere o tiene cargo); agrupá lo que es igual para todos (\"el equipaje de los dos se transfiere sin costo\"). Si el total es cero, decí \"sin costo\"; si es mayor, el importe (simulado). Terminá con \"¿Lo confirmo?\" o, si hay costo, \"¿Confirmás por\" y el importe. Si el pasajero pide más detalle, dáselo. Si no acepta, volvé a elegir sin ejecutar nada.\n"
+        "6. Con un sí explícito a este detalle (si el total es cero alcanza con un \"sí\"; si es mayor, el sí tiene que incluir el importe, y si dijo solo \"sí\" repetí el importe una vez) usá record_quote_confirmation con el quote_id elegido y el total en pesos confirmado. Con QUOTE_NOT_OFFERED o TOTAL_MISMATCH, pedí las opciones de nuevo o releé el total exacto."
     ),
     "CONFIRM": (
         "Paso actual: confirmación registrada, falta ejecutar.\n"
         "1. Usá escala_api_createRebooking con quote_id, confirmed true, confirmed_total_ars igual al total confirmado e idempotency_key \"rebook-\" seguido del quote_id.\n"
-        "2. CONFIRMATION_REQUIRED: hacé bien la lectura del detalle y pedí la confirmación antes de reintentar.\n"
+        "2. CONFIRMATION_REQUIRED: no le pidas al pasajero que repita lo que ya confirmó. Registrá de nuevo con record_quote_confirmation y reintentá una sola vez; si vuelve a fallar, decí que hubo un problema técnico, que no se cambió nada, y ofrecé derivar (reason technical_issue).\n"
         "3. QUOTE_EXPIRED o QUOTE_STALE: nada cambió; pedí las opciones de nuevo con escala_api_getRebookingOptions, leé el detalle otra vez y pedí confirmar de nuevo.\n"
         "4. TOTAL_MISMATCH: nada cambió; releé el total exacto y pedí confirmar."
     ),
