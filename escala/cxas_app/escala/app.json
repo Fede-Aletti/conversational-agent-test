@@ -120,7 +120,7 @@
     },
     {
       "name": "fsm_instructions",
-      "description": "Step text of the current fsm_state, injected into the agent instructions as {fsm_instructions}. Written by the before-model callback inject_fsm_instructions; the default is the root IDENTIFY step. Never set in evals.",
+      "description": "Step text of the current fsm_state, injected into the agent instructions as {fsm_instructions}. Written by the after-tool callback track_state right after each transition (step texts keyed by agent and state, target agent's text after transfer_to_agent); the default is the root IDENTIFY step. Never set in evals.",
       "schema": {
         "type": "STRING",
         "required": [],

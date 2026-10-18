@@ -2,7 +2,7 @@ import json
 
 from cxas_scrapi.utils.callback_libs import CallbackContext, Tool
 
-from python_code import after_tool_callback, next_fsm
+from python_code import FSM_STATES, STEP_TEXTS, after_tool_callback, next_fsm, step_text
 
 
 def tool(op):
@@ -233,3 +233,63 @@ def test_callback_wrapped_output_drives_fsm():
     ctx = CallbackContext(state={})
     after_tool_callback(tool("getRebookingOptions"), {}, ctx, {"output": EXEC})
     assert ctx.state["fsm_state"] == "OPTIONS"
+
+
+# --- Step text published right after the transition (T10: no one-call lag) ---
+
+ROOT = "root_agent"
+REBOOKING = "disruption_rebooking_agent"
+
+
+def run_as(agent, name, args, response, state=None):
+    ctx = CallbackContext(state=dict(state or {}), agentName=agent)
+    assert after_tool_callback(Tool(name=name, description=""), args, ctx, response) is None
+    return ctx.state
+
+
+def test_options_text_is_available_immediately_after_get_rebooking_options():
+    state = run_as(REBOOKING, "escala_api_getRebookingOptions", {}, OPTIONS, {"fsm_state": "TRIAGE"})
+    assert state["fsm_state"] == "OPTIONS"
+    assert state["fsm_instructions"] == step_text(REBOOKING, "OPTIONS")
+    assert "opciones consultadas" in state["fsm_instructions"]
+
+
+def test_text_follows_the_transition_for_the_running_agent():
+    state = run_as(ROOT, "escala_api_lookupBooking", {}, {"status": "ok", "pnr": "RMR4TX"})
+    assert state["fsm_state"] == "TRIAGE"
+    assert state["fsm_instructions"] == step_text(ROOT, "TRIAGE")
+    assert step_text(ROOT, "TRIAGE") != step_text(REBOOKING, "TRIAGE")
+
+
+@pytest.mark.parametrize("target", [REBOOKING, ROOT])
+@pytest.mark.parametrize("key", ["agent", "agent_name", "name"])
+def test_transfer_sets_the_target_agent_text_for_the_current_state(target, key):
+    caller = ROOT if target == REBOOKING else REBOOKING
+    before = {"fsm_state": "TRIAGE", "fsm_instructions": step_text(caller, "TRIAGE")}
+    args = {key: f"projects/p/locations/us/apps/escala/agents/{target}"}
+    state = run_as(caller, "transfer_to_agent", args, {}, before)
+    assert state["fsm_state"] == "TRIAGE"
+    assert state["fsm_instructions"] == step_text(target, "TRIAGE")
+
+
+def test_transfer_with_unknown_target_keeps_the_text():
+    before = {"fsm_state": "TRIAGE", "fsm_instructions": "x"}
+    assert run_as(ROOT, "transfer_to_agent", {"agent": "other"}, {}, before)["fsm_instructions"] == "x"
+
+
+def test_agent_is_inferred_from_the_tool_when_the_platform_gives_no_name():
+    state = run("getRebookingOptions", OPTIONS, {"fsm_state": "TRIAGE"})
+    assert state["fsm_instructions"] == step_text(REBOOKING, "OPTIONS")
+
+
+def test_every_agent_and_state_has_a_step_text_without_placeholders():
+    assert sorted(STEP_TEXTS) == [REBOOKING, ROOT]
+    for texts in STEP_TEXTS.values():
+        assert sorted(texts) == sorted(FSM_STATES)
+        assert all(t.strip() and "{" not in t and "}" not in t for t in texts.values())
+
+
+@pytest.mark.parametrize("raw", [None, "", "BOGUS", 3])
+def test_step_text_falls_back_to_identify(raw):
+    assert step_text(REBOOKING, raw) == STEP_TEXTS[REBOOKING]["IDENTIFY"]
+    assert step_text("nope", "IDENTIFY") == STEP_TEXTS[ROOT]["IDENTIFY"]
