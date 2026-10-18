@@ -1,6 +1,6 @@
-"""Build docs/assets/demo.gif: step-by-step replay of the resolved simulator session (simulator-b4030042).
+"""Build docs/assets/demo.gif (English) and demo.es.gif (Spanish): step-by-step replay of the resolved simulator session (simulator-b4030042).
 
-Left: chat bubbles (Spanish original + English gloss) and tool calls. Right: the FSM with the active state,
+Left: chat bubbles (Spanish original; the English GIF adds an English gloss) and tool calls. Right: the FSM with the active state,
 the edge just taken, the tool call that caused it, and per-turn tokens/latency. Data comes from the CES trace
 report of that session (see escala/docs/learnings.md).
 
@@ -18,6 +18,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 import diagrams
+from i18n import get_lang, set_lang, suffix, tr
 from svgkit import ACCENT, INK, LINK, MUTED, PAPER, PAPER2, RULE, SOFT, TINT, esc
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -164,13 +165,14 @@ html,body{{margin:0;background:{PAPER};font-family:-apple-system,'Helvetica Neue
 
 
 def chat_html(items) -> str:
+    gloss = get_lang() == "en"
     out = []
     for it in items:
         if it[0] == "user":
-            en = f'<div class="en">{esc(it[2])}</div>' if it[2] else ""
+            en = f'<div class="en">{esc(it[2])}</div>' if it[2] and gloss else ""
             out.append(f'<div class="b u">{esc(it[1])}{en}</div>')
         elif it[0] == "agent":
-            out.append(f'<div class="who">{esc(it[1])}</div><div class="b a">{esc(it[2])}<div class="en">{esc(it[3])}</div></div>')
+            out.append(f'<div class="who">{esc(it[1])}</div><div class="b a">{esc(it[2])}{f'<div class="en">{esc(it[3])}</div>' if gloss else ""}</div>')
         else:
             out.append(f'<div class="tool">tool · <b>{esc(it[1])}</b> → {esc(it[2])}</div>')
     return "".join(out)
@@ -183,36 +185,37 @@ def frame_html(step: Step, history: list) -> str:
     svg = svg.replace('width="700" height="430"', 'width="640" height="393"')
     if step.final:
         cards = (
-            f'<div class="card hot"><div class="h">Session result</div><div class="final">Resolved: new flight booked at no cost, only after the passenger confirmed.</div>'
-            f'<div class="s" style="margin-top:6px">{TOTALS["turns"]} turns · {TOTALS["tools"]} tool calls · {TOTALS["llm"]} LLM calls · {TOTALS["latency"]} s perceived</div></div>'
-            f'<div class="row"><div class="card"><div class="h">Input tokens (total)</div><div class="big">{TOTALS["tokens_in"]:,}</div></div>'
-            f'<div class="card"><div class="h">Output tokens (total)</div><div class="big">{TOTALS["tokens_out"]:,}</div></div>'
-            f'<div class="card"><div class="h">Per LLM call (input)</div><div class="big">2.5k-8k</div></div></div>'
+            f'<div class="card hot"><div class="h">{tr("Session result")}</div><div class="final">{tr("Resolved: new flight booked at no cost, only after the passenger confirmed.")}</div>'
+            f'<div class="s" style="margin-top:6px">{TOTALS["turns"]} {tr("turns")} · {TOTALS["tools"]} {tr("tool calls")} · {TOTALS["llm"]} {tr("LLM calls")} · {TOTALS["latency"]} s {tr("perceived")}</div></div>'
+            f'<div class="row"><div class="card"><div class="h">{tr("Input tokens (total)")}</div><div class="big">{TOTALS["tokens_in"]:,}</div></div>'
+            f'<div class="card"><div class="h">{tr("Output tokens (total)")}</div><div class="big">{TOTALS["tokens_out"]:,}</div></div>'
+            f'<div class="card"><div class="h">{tr("Per LLM call (input)")}</div><div class="big">2.5k-8k</div></div></div>'
         )
     else:
         if step.tool:
             name, args, res = step.tool
             tool_card = (
-                f'<div class="card hot"><div class="h">Tool call that moved the state</div><div class="m">{esc(name)}</div>'
-                f'<div class="s">{esc(args)}</div><div class="s">→ {esc(res)}</div><div class="x">{esc(step.transition or "")}</div></div>'
+                f'<div class="card hot"><div class="h">{tr("Tool call that moved the state")}</div><div class="m">{esc(name)}</div>'
+                f'<div class="s">{esc(tr(args))}</div><div class="s">→ {esc(tr(res))}</div><div class="x">{esc(tr(step.transition or ""))}</div></div>'
             )
         else:
-            tool_card = '<div class="card"><div class="h">Waiting for the next tool call</div><div class="s">The state only changes when a tool result arrives.</div></div>'
+            tool_card = f'<div class="card"><div class="h">{tr("Waiting for the next tool call")}</div><div class="s">{tr("The state only changes when a tool result arrives.")}</div></div>'
         if step.show_metrics:
-            met = (f'<div class="card"><div class="h">Turn {n + 1} · tokens in / out</div><div class="big">{mtr[0]:,} / {mtr[1]}</div></div>'
-                   f'<div class="card"><div class="h">Turn {n + 1} · perceived latency</div><div class="big">{mtr[2]:.2f} s</div></div>')
+            met = (f'<div class="card"><div class="h">{tr("Turn")} {n + 1} · {tr("tokens in / out")}</div><div class="big">{mtr[0]:,} / {mtr[1]}</div></div>'
+                   f'<div class="card"><div class="h">{tr("Turn")} {n + 1} · {tr("perceived latency")}</div><div class="big">{mtr[2]:.2f} s</div></div>')
         else:
-            met = (f'<div class="card"><div class="h">Turn {n + 1} · tokens in / out</div><div class="big" style="color:{RULE}">…</div></div>'
-                   f'<div class="card"><div class="h">Turn {n + 1} · perceived latency</div><div class="big" style="color:{RULE}">…</div></div>')
+            met = (f'<div class="card"><div class="h">{tr("Turn")} {n + 1} · {tr("tokens in / out")}</div><div class="big" style="color:{RULE}">…</div></div>'
+                   f'<div class="card"><div class="h">{tr("Turn")} {n + 1} · {tr("perceived latency")}</div><div class="big" style="color:{RULE}">…</div></div>')
         cards = tool_card + f'<div class="row">{met}</div>'
     return (
-        f"<style>{CSS}</style><div class='frame'><div class='top'><div><span class='e'>Escala</span><span class='t'>Replay of a resolved session</span></div>"
-        f"<div class='r'>simulator-b4030042 · turn {n + 1}/6</div></div>"
+        f"<style>{CSS}</style><div class='frame'><div class='top'><div><span class='e'>Escala</span><span class='t'>{tr('Replay of a resolved session')}</span></div>"
+        f"<div class='r'>simulator-b4030042 · {tr('turn')} {n + 1}/6</div></div>"
         f"<div class='chat'>{chat_html(history)}</div><div class='right'>{svg}{cards}</div></div>"
     )
 
 
-def main() -> None:
+def main(lang: str = "en") -> None:
+    set_lang(lang)
     steps = build_steps()
     tmp = Path(tempfile.mkdtemp(prefix="escala-demo-"))
     frames: list[Path] = []
@@ -235,11 +238,14 @@ def main() -> None:
         for _ in range(step.hold):
             shutil.copy(path, seq / f"s{k:04d}.png")
             k += 1
-    out = ASSETS / "demo.gif"
+    out = ASSETS / f"demo{suffix()}.gif"
     subprocess.run(["gifski", "--fps", "2", "--width", "1100", "--quality", "100", "--output", str(out), *sorted(map(str, seq.glob("s*.png")))], check=True)
     print(f"wrote {out} ({out.stat().st_size / 1e6:.2f} MB), {len(steps)} steps, {k} ticks")
     shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    for _lang in sys.argv[1:] or ("en", "es"):
+        main(_lang)

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from html import escape
 
+from i18n import get_lang, tr
+
 PAPER = "#f5f5f5"
 PAPER2 = "#ececec"
 INK = "#2d3142"
@@ -47,6 +49,7 @@ def text(x, y, s, size=12, weight=400, fill=INK, family=SANS, anchor="start", ls
         extra += ' font-style="italic"'
     if opacity is not None:
         extra += f' opacity="{opacity}"'
+    s = tr(s)
     return (
         f'<text x="{x}" y="{y}" font-family="{family}" font-size="{size}" font-weight="{weight}" '
         f'fill="{fill}" text-anchor="{anchor}"{extra}>{esc(s)}</text>'
@@ -54,7 +57,7 @@ def text(x, y, s, size=12, weight=400, fill=INK, family=SANS, anchor="start", ls
 
 
 def eyebrow(x, y, s, fill=SOFT, anchor="start") -> str:
-    return text(x, y, s.upper(), size=8, weight=500, fill=fill, family=MONO, anchor=anchor, ls="1.4")
+    return text(x, y, tr(s).upper(), size=8, weight=500, fill=fill, family=MONO, anchor=anchor, ls="1.4")
 
 
 def mono(x, y, s, size=9, fill=MUTED, anchor="start", weight=400) -> str:
@@ -63,6 +66,7 @@ def mono(x, y, s, size=9, fill=MUTED, anchor="start", weight=400) -> str:
 
 def label(x, y, s, size=9, fill=MUTED, anchor="middle", mask=True, weight=400) -> str:
     """Mono arrow label with a paper mask so it never touches a stroke."""
+    s = tr(s)
     w = len(s) * size * 0.62 + 10
     if anchor == "middle":
         rx = x - w / 2
@@ -131,7 +135,7 @@ def arrow(points, color="muted", width=1.3, dashed=False, both=False, head=True)
 def svg_doc(width, height, body, title, desc) -> str:
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
-        f'role="img" aria-labelledby="t d"><title id="t">{esc(title)}</title><desc id="d">{esc(desc)}</desc>'
+        f'role="img" aria-labelledby="t d"><title id="t">{esc(tr(title))}</title><desc id="d">{esc(tr(desc))}</desc>'
         f'{defs()}<rect width="{width}" height="{height}" fill="{PAPER}"/>{body}</svg>'
     )
 
@@ -145,7 +149,7 @@ def title_block(x, y, eyebrow_text, title, subtitle=None) -> str:
 
 def html_page(svg: str, title: str) -> str:
     return (
-        f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{esc(title)}</title>'
+        f'<!doctype html><html lang="{get_lang()}"><head><meta charset="utf-8"><title>{esc(title)}</title>'
         f"<style>html,body{{margin:0;background:{PAPER};}}svg{{display:block;margin:0 auto;max-width:100%;height:auto}}</style>"
         f"</head><body>{svg}</body></html>"
     )

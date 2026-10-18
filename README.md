@@ -1,3 +1,5 @@
+**English** | [Español](README.es.md)
+
 # Escala
 
 A voice and chat agent that rebooks passengers after a flight disruption, built on Google CX Agent Studio (CES/GECX) with a deterministic Firebase backend. The LLM understands and phrases; code decides. Every conversation step is driven by a small finite-state machine, and no booking changes until the passenger has confirmed the exact quote.
