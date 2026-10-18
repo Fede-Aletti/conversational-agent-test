@@ -14,3 +14,6 @@ escala/backend/**/firestore-debug.log
 escala/backend/**/firebase-debug.log
 escala/backend/**/ui-debug.log
 escala/backend/**/.firebase/
+
+# local ODD task tracking
+odd/

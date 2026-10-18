@@ -5,8 +5,13 @@ import { normalizeName } from '../src/bookings/domain/normalize';
 import type { Dataset } from '../src/shared/types';
 import { buildDataset } from './dataset';
 
-/** Projects the seed may write to besides the emulator. */
-export const ALLOWED_PROJECTS = ['gen-lang-client-0907599903'];
+/**
+ * Real projects the seed may write to besides the emulator. Comma-separated project ids in the
+ * SEED_ALLOWED_PROJECTS env var (e.g. `SEED_ALLOWED_PROJECTS=my-project-id`). Empty by default: seeding a real project is opt-in.
+ */
+export function allowedProjects(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.SEED_ALLOWED_PROJECTS ?? '').split(',').map((p) => p.trim()).filter(Boolean);
+}
 
 const SEEDED = ['flights', 'bookings', 'policy_snippets', 'scenarios'];
 const RUNTIME = ['quotes', 'rebookings', 'idempotency', 'handoff_cases'];
@@ -53,7 +58,8 @@ async function main(): Promise<void> {
     projectId = process.env.GCLOUD_PROJECT ?? 'demo-escala';
   } else {
     projectId = args.project as string;
-    if (!ALLOWED_PROJECTS.includes(projectId)) throw new Error(`Refusing to seed project "${projectId}": not in the allowlist (${ALLOWED_PROJECTS.join(', ')}).`);
+    const allowed = allowedProjects();
+    if (!allowed.includes(projectId)) throw new Error(`Refusing to seed project "${projectId}": not in SEED_ALLOWED_PROJECTS (${allowed.join(', ') || 'unset'}).`);
     if (process.env.FIRESTORE_EMULATOR_HOST) throw new Error('FIRESTORE_EMULATOR_HOST is set; unset it to seed a real project.');
   }
   if (!getApps().length) initializeApp({ projectId });

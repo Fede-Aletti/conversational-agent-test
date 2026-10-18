@@ -1,0 +1,7 @@
+The skills in this directory are vendored from Google's cxas-scrapi project
+(https://github.com/GoogleCloudPlatform/cxas-scrapi), which is licensed under the
+Apache License, Version 2.0 (see the LICENSE file in this directory).
+
+They are included unmodified or with local adjustments for this workspace and remain
+the property of their original authors. The MIT license at the repository root applies
+only to the Escala project's own code (escala/), not to these skills.
