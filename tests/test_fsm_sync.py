@@ -70,6 +70,9 @@ def test_step_texts_have_no_unresolved_placeholders():
         assert all("{" not in t and "}" not in t for t in texts.values())
 
 
-def test_filler_rule_is_not_allowed_after_the_result():
+def test_no_filler_before_tool_calls():
+    # A filler emitted with the tool call made the model return an empty reply after the
+    # result (simulator-70834326, simulator-6fdcb2ef). The rule must forbid announcing.
     text = (ESCALA_APP_DIR / "agents" / "disruption_rebooking_agent" / "instruction.txt").read_text(encoding="utf-8")
-    assert "nunca cuando ya tenés el resultado" in text
+    assert "Estoy consultando" not in text
+    assert "No anuncies que vas a consultar" in text
